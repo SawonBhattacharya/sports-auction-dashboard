@@ -161,13 +161,34 @@ class _DBConn:
 def connect() -> _DBConn:
     """Return a ``_DBConn`` wrapping either psycopg2 or sqlite3."""
     if _use_pg():
-        raw = psycopg2.connect(_get_db_url(), cursor_factory=RealDictCursor)
-        return _DBConn(raw, is_pg=True)
+        url = _get_db_url() or ""
+        # Check for password placeholders
+        if "[YOUR-PASSWORD]" in url or "[YOUR_PASSWORD]" in url or "<password>" in url:
+            st.error(
+                "❌ **Database Configuration Error**\n\n"
+                "It looks like you copied the database URL placeholder without replacing `[YOUR-PASSWORD]` with your actual database password.\n\n"
+                "Please update your password in Streamlit Secrets (App Settings → Secrets) and redeploy."
+            )
+            st.stop()
+        try:
+            raw = psycopg2.connect(url, cursor_factory=RealDictCursor)
+            return _DBConn(raw, is_pg=True)
+        except Exception as e:
+            st.error(
+                "❌ **Database Connection Failed**\n\n"
+                "Unable to connect to the cloud PostgreSQL database. This is usually caused by:\n\n"
+                "- **Incorrect Password**: Verify that the database password in your connection string is correct.\n"
+                "- **Unencoded Special Characters**: If your password contains special characters (e.g. `@`, `:`, `/`, `#`, `?`), they **must** be URL-encoded. For example, `@` becomes `%40`, `#` becomes `%23`, etc.\n"
+                "- **Database Paused**: Log into your Supabase dashboard to ensure your database is active and has not been paused due to inactivity.\n\n"
+                f"**Error Details:** `{str(e).strip()}`"
+            )
+            st.stop()
     raw = sqlite3.connect(DB_PATH, check_same_thread=False)
     raw.row_factory = sqlite3.Row
     raw.execute("PRAGMA foreign_keys = ON")
     raw.execute("PRAGMA journal_mode = WAL")
     return _DBConn(raw, is_pg=False)
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════

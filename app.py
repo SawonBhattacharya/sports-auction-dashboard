@@ -351,7 +351,7 @@ def init_db() -> None:
                 economy REAL,
                 fielding_dismissals REAL,
                 profile_url TEXT,
-                photo_url TEXT,
+                
                 status TEXT NOT NULL DEFAULT 'AVAILABLE',
                 sold_team TEXT,
                 sold_price INTEGER,
@@ -514,7 +514,7 @@ def load_excel_players(path: Path, base_price: int) -> pd.DataFrame:
         player_id = clean_text(row.get("Player ID")) or f"P{idx + 1:03d}"
         batting = clean_text(response.get("Batting")) if response is not None else ""
         bowling = clean_text(response.get("Bowling")) if response is not None else ""
-        photo = clean_text(response.get("Photo")) if response is not None else ""
+        #photo = clean_text(response.get("Photo")) if response is not None else ""
         records.append(
             {
                 "id": player_id,
@@ -533,7 +533,6 @@ def load_excel_players(path: Path, base_price: int) -> pd.DataFrame:
                 "economy": number_or_none(row.get("Economy")),
                 "fielding_dismissals": number_or_none(row.get("Fielding Dismissals")),
                 "profile_url": extract_profile_url(row.get("Profile")),
-                "photo_url": photo,
             }
         )
     return pd.DataFrame(records)
@@ -553,11 +552,11 @@ def import_players(path: Path, base_price: int, replace_existing: bool) -> int:
                 INSERT INTO players (
                     id, name, category, batting, bowling, base_price, matches, innings,
                     runs, average, strike_rate, best_score, wickets, economy,
-                    fielding_dismissals, profile_url, photo_url, updated_at
+                    fielding_dismissals, profile_url, updated_at
                 ) VALUES (
                     :id, :name, :category, :batting, :bowling, :base_price, :matches,
                     :innings, :runs, :average, :strike_rate, :best_score, :wickets,
-                    :economy, :fielding_dismissals, :profile_url, :photo_url, :updated_at
+                    :economy, :fielding_dismissals, :profile_url, :updated_at
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     name = excluded.name,
@@ -575,7 +574,6 @@ def import_players(path: Path, base_price: int, replace_existing: bool) -> int:
                     economy = excluded.economy,
                     fielding_dismissals = excluded.fielding_dismissals,
                     profile_url = excluded.profile_url,
-                    photo_url = excluded.photo_url,
                     updated_at = excluded.updated_at
                 """,
                 {**record, "updated_at": now},
@@ -586,6 +584,7 @@ def import_players(path: Path, base_price: int, replace_existing: bool) -> int:
             ("SYNC", f"Imported {count} players from {path.name}", now),
         )
         con.commit()
+        mark_captains()
     return count
 
 
@@ -694,6 +693,11 @@ def mark_sold(player_id: str, team_name: str, sale_price: int, bid_count: int) -
     player = one("SELECT * FROM players WHERE id = ?", (player_id,))
     if not team or not player:
         return False, "Missing team or player."
+    if player["status"] != "ACTIVE":
+        return False, "Player is not currently active."
+
+    if team["Squad Size"] >= team["Max Squad Size"]:
+        return False, f"{team_name} already has a full squad."
     if sale_price < int(player["base_price"]):
         return False, "Sale price cannot be below the player base price."
     if sale_price > int(team["Max Bid Power"]):
@@ -737,25 +741,59 @@ def mark_unsold(player_id: str, note: str = "") -> None:
         con.commit()
 
 
-def reset_player(player_id: str) -> None:
+def restore_player(player_id: str) -> None:
+
+    player = one(
+        "SELECT name FROM players WHERE id=?",
+        (player_id,)
+    )
+
+    captain_names = {
+        r["captain_name"].strip().lower()
+        for r in rows(
+            "SELECT captain_name FROM teams"
+        )
+        if r["captain_name"]
+    }
+
+    new_status = (
+        "CAPTAIN"
+        if player and player["name"].strip().lower() in captain_names
+        else "AVAILABLE"
+    )
+
     with closing(connect()) as con:
-        now = utc_now()
         con.execute(
             """
             UPDATE players
-            SET status = 'AVAILABLE', sold_team = NULL, sold_price = NULL, bid_count = 0,
-                picked_at = NULL, sold_at = NULL, updated_at = ?
-            WHERE id = ?
+            SET status=?, updated_at=?
+            WHERE id=?
             """,
-            (now, player_id),
+            (
+                new_status,
+                utc_now(),
+                player_id,
+            ),
         )
-        active_id = get_state(con, "active_player_id")
-        if active_id == player_id:
-            set_state(con, "active_player_id", None)
+
         con.execute(
-            "INSERT INTO audit_log(action, player_id, note, created_at) VALUES (?, ?, ?, ?)",
-            ("RESET_PLAYER", player_id, "Player returned to pool", now),
+            """
+            INSERT INTO audit_log(
+                action,
+                player_id,
+                note,
+                created_at
+            )
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                "RESTORED",
+                player_id,
+                f"Restored as {new_status}",
+                utc_now(),
+            ),
         )
+
         con.commit()
 
 
@@ -864,23 +902,12 @@ def find_player_image(player: sqlite3.Row) -> Path | None:
     """Resolve the best photo for a player.
 
     Priority order:
-      1. ``photo_url`` column in DB if it points to an existing local file
-         (manually pinned via the Photo Assignment panel — always wins).
-      2. Direct name match in ``images/Player_Photo/``:  filename stem is
+      1. Direct name match in ``images/Player_Photo/``:  filename stem is
          compared (normalised) against the player name.  Files are now simply
          named ``Player Name.jpg`` with no hash prefix.
-      3. Same scan in the root ``images/`` folder as a last resort.
+      2. Same scan in the root ``images/`` folder as a last resort.
     """
-    # ── 1. DB-pinned photo ───────────────────────────────────────────────────
-    pinned = player["photo_url"] if player["photo_url"] else ""
-    if pinned:
-        pinned_path = Path(pinned)
-        if not pinned_path.is_absolute():
-            pinned_path = ROOT / pinned_path
-        if pinned_path.exists():
-            return pinned_path
-
-    # ── 2 & 3. Auto name-matching ────────────────────────────────────────────
+    # ── 1. Auto name-matching ────────────────────────────────────────────
     player_photo_dir = IMAGE_DIR / "Player_Photo"
     search_dirs = [d for d in [player_photo_dir, IMAGE_DIR] if d.exists()]
 
@@ -1199,6 +1226,8 @@ def manage_teams_panel() -> None:
                             (new_name, new_captain, logo_path, int(new_purse), int(new_max_squad), int(new_min_roster), team["name"])
                         )
                         con.commit()
+                    
+                    mark_captains()
                     st.success(f"Successfully updated team {new_name} details!")
                     st.rerun()
 
@@ -1356,6 +1385,47 @@ def restore_player(player_id: str) -> None:
         )
         con.commit()
 
+def mark_captains() -> None:
+    teams = rows(
+        """
+        SELECT captain_name
+        FROM teams
+        WHERE captain_name IS NOT NULL
+        """
+    )
+
+    captain_names = [
+        t["captain_name"].strip().lower()
+        for t in teams
+        if t["captain_name"]
+    ]
+
+    if not captain_names:
+        return
+
+    with closing(connect()) as con:
+
+        # First remove old captain tags
+        con.execute(
+            """
+            UPDATE players
+            SET status='AVAILABLE'
+            WHERE status='CAPTAIN'
+            """
+        )
+
+        placeholders = ",".join("?" * len(captain_names))
+
+        con.execute(
+            f"""
+            UPDATE players
+            SET status='CAPTAIN'
+            WHERE LOWER(name) IN ({placeholders})
+            """,
+            tuple(captain_names),
+        )
+
+        con.commit()
 
 def update_player_base_price(player_id: str, new_price: int) -> None:
     with closing(connect()) as con:
@@ -1384,7 +1454,14 @@ def player_roster_panel() -> None:
     )
 
     # ── Tabs: Available pool | Excluded players ───────────────────────────
-    tab_avail, tab_excl, tab_price = st.tabs(["Available Pool", "Excluded Players", "Edit Base Prices"])
+    tab_avail, tab_excl, tab_capt, tab_price = st.tabs(
+    [
+        "Available Pool",
+        "Excluded Players",
+        "Captains",
+        "Edit Base Prices"
+    ]
+)
 
     with tab_avail:
         pool = rows(
@@ -1457,6 +1534,38 @@ def player_roster_panel() -> None:
                         st.rerun()
                 st.divider()
 
+    with tab_capt:
+
+        captains = rows(
+            """
+            SELECT id,name,category
+            FROM players
+            WHERE status='CAPTAIN'
+            ORDER BY name
+            """
+        )
+
+        if not captains:
+            st.info("No captains detected.")
+        else:
+
+            st.success(
+                f"{len(captains)} captain(s) automatically excluded from auction."
+            )
+
+            st.dataframe(
+                [
+                    {
+                        "ID": p["id"],
+                        "Name": p["name"],
+                        "Category": p["category"],
+                    }
+                    for p in captains
+                ],
+                hide_index=True,
+                use_container_width=True,
+            )
+        
     with tab_price:
         st.markdown("Adjust the base price for individual players. Changes take effect immediately.")
         all_players = rows(
@@ -1498,145 +1607,6 @@ def player_roster_panel() -> None:
                     st.rerun()
 
 
-def photo_assignment_panel() -> None:
-    """Admin panel to manually pin a photo to each player.
-
-    Useful when two players share the same name (auto-matching would pick the
-    wrong photo for one of them).  The chosen path is stored in
-    ``players.photo_url`` and takes priority over name-based scanning.
-    """
-    st.title("Player Photo Assignment")
-    st.markdown(
-        """
-        <div class="panel" style="border-left:4px solid var(--accent-2); margin-bottom:18px;">
-          <strong style="color:var(--accent-2);">When to use this panel</strong><br>
-          If two players share the same name (or auto-matching picks the wrong photo),
-          use the selector below to manually pin the correct photo to each player.
-          Manually pinned photos always override the automatic name-based lookup.
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # ── Player selector ───────────────────────────────────────────────────
-    all_players = rows(
-        "SELECT id, name, photo_url, status FROM players ORDER BY name"
-    )
-    if not all_players:
-        st.info("No players loaded yet.")
-        return
-
-    player_labels = [f"[{p['id']}] {p['name']}" for p in all_players]
-    chosen_label = st.selectbox("Select player to assign photo", player_labels)
-    chosen_player = all_players[player_labels.index(chosen_label)]
-
-    # Show current assignment
-    current_photo = find_player_image(chosen_player)
-    col_cur, col_form = st.columns([1, 2], gap="large")
-    with col_cur:
-        st.markdown("**Current photo**")
-        if current_photo:
-            st.image(str(current_photo), use_container_width=True)
-            is_pinned = bool(chosen_player["photo_url"])
-            if is_pinned:
-                st.success("📌 Manually pinned")
-                if st.button("Clear pin (revert to auto)", key="clear_pin"):
-                    with closing(connect()) as con:
-                        con.execute(
-                            "UPDATE players SET photo_url = NULL, updated_at = ? WHERE id = ?",
-                            (utc_now(), chosen_player["id"]),
-                        )
-                        con.commit()
-                    st.success("Pin cleared — auto-matching will apply.")
-                    st.rerun()
-            else:
-                st.caption("Auto-matched by name")
-        else:
-            st.markdown(
-                '<div class="panel" style="text-align:center;padding:40px;color:var(--muted);">No photo found</div>',
-                unsafe_allow_html=True,
-            )
-
-    with col_form:
-        st.markdown("**All available photos** — click a filename to assign it")
-        all_photos = get_all_player_photos()
-        if not all_photos:
-            st.warning("No photos found in images/Player_Photo/.")
-        else:
-            # Show photos that auto-match this player's name first, then all others
-            target = _normalise(chosen_player["name"])
-            def _sort_key(p: Path) -> tuple:
-                # Filenames are now plain "Player Name.ext"
-                name_part = _normalise(p.stem)
-                return (0 if name_part == target else 1, p.name.lower())
-            all_photos.sort(key=_sort_key)
-
-            # Filter by search term
-            search = st.text_input(
-                "Filter photos by filename",
-                placeholder="e.g. Abhishek or IMG-2026",
-                key="photo_filter",
-            )
-            filtered = [
-                p for p in all_photos
-                if not search or search.lower() in p.name.lower()
-            ]
-            st.caption(f"{len(filtered)} photo(s) shown")
-
-            # Render as a scrollable thumbnail grid (4 per row)
-            ROW_SIZE = 4
-            for row_start in range(0, len(filtered), ROW_SIZE):
-                batch = filtered[row_start : row_start + ROW_SIZE]
-                thumb_cols = st.columns(ROW_SIZE)
-                for col, photo_path in zip(thumb_cols, batch):
-                    with col:
-                        try:
-                            st.image(str(photo_path), use_container_width=True)
-                        except Exception:
-                            st.caption("(preview error)")
-                        # Highlight if this is the currently pinned one
-                        is_active = (
-                            chosen_player["photo_url"]
-                            and Path(chosen_player["photo_url"]).resolve() == photo_path.resolve()
-                        )
-                        btn_label = "✅ Assigned" if is_active else "Assign"
-                        btn_type = "primary" if is_active else "secondary"
-                        short_name = photo_path.name
-                        if len(short_name) > 28:
-                            short_name = short_name[:13] + "…" + short_name[-12:]
-                        st.caption(short_name)
-                        if st.button(
-                            btn_label,
-                            key=f"assign_{chosen_player['id']}_{photo_path.name}",
-                            use_container_width=True,
-                            type=btn_type,
-                            disabled=is_active,
-                        ):
-                            with closing(connect()) as con:
-                                con.execute(
-                                    "UPDATE players SET photo_url = ?, updated_at = ? WHERE id = ?",
-                                    (str(photo_path), utc_now(), chosen_player["id"]),
-                                )
-                                con.commit()
-                            st.success(f"Pinned '{photo_path.name}' to {chosen_player['name']}.")
-                            st.rerun()
-
-    # ── Bulk overview table ───────────────────────────────────────────────
-    st.divider()
-    st.subheader("Assignment Overview")
-    overview = []
-    for p in all_players:
-        resolved = find_player_image(p)
-        overview.append({
-            "ID": p["id"],
-            "Name": p["name"],
-            "Status": p["status"],
-            "Photo Resolved": resolved.name if resolved else "❌ Not found",
-            "Pinned?": "📌 Yes" if p["photo_url"] else "Auto",
-        })
-    st.dataframe(overview, hide_index=True, use_container_width=True)
-
-
 def summary_and_logs() -> None:
     st.title("Summary & Logs")
     metrics = summary_metrics()
@@ -1649,8 +1619,8 @@ def summary_and_logs() -> None:
     st.subheader("Player Pool")
     status_filter = st.multiselect(
         "Status filter",
-        ["AVAILABLE", "ACTIVE", "SOLD", "UNSOLD", "EXCLUDED"],
-        default=["AVAILABLE", "ACTIVE", "SOLD", "UNSOLD"],
+        ["AVAILABLE", "ACTIVE", "SOLD", "UNSOLD", "EXCLUDED","CAPTAIN"],
+        default=["AVAILABLE", "ACTIVE", "SOLD", "UNSOLD","CAPTAIN"],
     )
     placeholders = ",".join("?" for _ in status_filter) or "''"
     player_rows = rows(
@@ -1700,14 +1670,24 @@ def setup_sidebar(role: str) -> None:
     st.sidebar.divider()
 
     with closing(connect()) as con:
-        player_count  = con.execute("SELECT COUNT(*) c FROM players WHERE status != 'EXCLUDED'").fetchone()["c"]
+        player_count  = con.execute("SELECT COUNT(*) c FROM players WHERE status NOT IN ('EXCLUDED','CAPTAIN')").fetchone()["c"]
         excluded_count = con.execute("SELECT COUNT(*) c FROM players WHERE status = 'EXCLUDED'").fetchone()["c"]
+        captain_count = con.execute(
+    """
+    SELECT COUNT(*) c
+    FROM players
+    WHERE status='CAPTAIN'
+    """
+).fetchone()["c"]
+
         available_count = con.execute("SELECT COUNT(*) c FROM players WHERE status = 'AVAILABLE'").fetchone()["c"]
 
     st.sidebar.metric("Players in Pool", player_count)
     st.sidebar.metric("Available", available_count)
     if excluded_count:
         st.sidebar.metric("Excluded (pre-auction)", excluded_count)
+    if captain_count:
+        st.sidebar.metric("Captains", captain_count)
     st.sidebar.metric("Base Price", rupees(get_min_base_price()))
 
     if role == "Admin":
@@ -1790,6 +1770,7 @@ def main() -> None:
     st.markdown(asset_css(), unsafe_allow_html=True)
     init_db()
     bootstrap_data_if_needed()
+    mark_captains()
 
     role = st.session_state.get("role")
     if not role:
@@ -1799,7 +1780,7 @@ def main() -> None:
     setup_sidebar(role)
 
     if role == "Admin":
-        tabs = st.tabs(["Live Bid", "Team Leaderboards", "Manage Teams", "Auction Control", "Player Roster", "Player Photos", "Summary & Logs"])
+        tabs = st.tabs(["Live Bid", "Team Leaderboards", "Manage Teams", "Auction Control", "Player Roster", "Summary & Logs"])
         with tabs[0]:
             admin_console()
         with tabs[1]:
@@ -1811,8 +1792,6 @@ def main() -> None:
         with tabs[4]:
             player_roster_panel()
         with tabs[5]:
-            photo_assignment_panel()
-        with tabs[6]:
             summary_and_logs()
     else:
         tabs = st.tabs(["Live Stage", "Team Leaderboards", "Summary & Logs"])

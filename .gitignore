@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Database (runtime state — never commit)
+*.db
+*.sqlite
+*.sqlite3
+
+# Streamlit secrets (NEVER commit real secrets)
+.streamlit/secrets.toml
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local run helpers
+run_streamlit.cmd
+
+# Local notes/credentials
+notes.txt
+

@@ -3,10 +3,11 @@ from __future__ import annotations
 import base64
 import mimetypes
 import os
+import re
 import sqlite3
 import sys
 from contextlib import closing
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,19 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
+# ── Optional PostgreSQL driver ──────────────────────────────────────────────
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+
+    _HAS_PG = True
+except ImportError:
+    _HAS_PG = False
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Paths & constants
+# ═══════════════════════════════════════════════════════════════════════════
 
 ROOT = Path(__file__).parent
 DB_PATH = ROOT / "auction.db"
@@ -23,9 +37,142 @@ FAVICON_PATH = IMAGE_DIR / "favicon_logo.png"
 HOME_LOGO_PATH = IMAGE_DIR / "home_page_logo.png"
 ADMIN_PANEL_PATH = IMAGE_DIR / "admin_panel.png"
 VIEWER_BACKDROP_PATH = IMAGE_DIR / "viewer_player_focus.png"
-ADMIN_PASSCODE = os.getenv("AUCTION_ADMIN_PASSCODE", "admin123")
-VIEWER_PASSCODE = os.getenv("AUCTION_VIEWER_PASSCODE", "viewer")
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Secrets helpers — passcodes & database URL
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _get_db_url() -> str | None:
+    """Return the PostgreSQL connection URL from Streamlit secrets or env."""
+    try:
+        url = st.secrets.get("database", {}).get("url")
+        if url:
+            return str(url)
+    except Exception:
+        pass
+    return os.getenv("DATABASE_URL") or None
+
+
+def _get_passcode(role: str) -> str:
+    """Return the passcode for the given role (admin / viewer).
+
+    Priority: st.secrets → environment variable → empty string (deny by default).
+    """
+    key = "admin" if role.lower() == "admin" else "viewer"
+    env_key = f"AUCTION_{key.upper()}_PASSCODE"
+    try:
+        code = st.secrets.get("passcodes", {}).get(key)
+        if code:
+            return str(code)
+    except Exception:
+        pass
+    return os.getenv(env_key, "")
+
+
+def _use_pg() -> bool:
+    """True when a PostgreSQL URL is configured and the driver is available."""
+    return _HAS_PG and bool(_get_db_url())
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Database abstraction — unified wrapper over sqlite3 / psycopg2
+# ═══════════════════════════════════════════════════════════════════════════
+
+_NAMED_PARAM_RE = re.compile(r":([A-Za-z_]\w*)")
+
+
+class _DBConn:
+    """Thin shim so the rest of the app can use *one* coding style
+    (``?`` positional params, ``:name`` named params, ``executescript``)
+    regardless of whether the backend is SQLite or PostgreSQL.
+
+    Usage is identical to ``sqlite3.Connection``:
+    ``con.execute(sql, params).fetchone()``
+    """
+
+    def __init__(self, raw_connection: Any, *, is_pg: bool):
+        self._raw = raw_connection
+        self._pg = is_pg
+        self._cur = raw_connection.cursor() if is_pg else None
+
+    # ── param conversion ──────────────────────────────────────────────
+    @staticmethod
+    def _convert(sql: str, is_pg: bool) -> str:
+        if not is_pg:
+            return sql
+        # :named  →  %(named)s   (must run before ? replacement)
+        sql = _NAMED_PARAM_RE.sub(r"%(\1)s", sql)
+        # ?  →  %s
+        sql = sql.replace("?", "%s")
+        return sql
+
+    # ── execute / executemany / executescript ──────────────────────────
+    def execute(self, sql: str, params: Any = None) -> Any:
+        sql = self._convert(sql, self._pg)
+        if self._pg:
+            self._cur.execute(sql, params or ())
+            return self._cur
+        if params:
+            return self._raw.execute(sql, params)
+        return self._raw.execute(sql)
+
+    def executemany(self, sql: str, params_list: Any) -> Any:
+        sql = self._convert(sql, self._pg)
+        if self._pg:
+            for p in params_list:
+                self._cur.execute(sql, p)
+            return self._cur
+        return self._raw.executemany(sql, params_list)
+
+    def executescript(self, sql: str) -> None:
+        if self._pg:
+            self._cur.execute(sql)
+        else:
+            self._raw.executescript(sql)
+
+    # ── transaction & lifecycle ───────────────────────────────────────
+    def commit(self) -> None:
+        self._raw.commit()
+
+    def close(self) -> None:
+        if self._cur:
+            try:
+                self._cur.close()
+            except Exception:
+                pass
+        try:
+            self._raw.close()
+        except Exception:
+            pass
+
+    def __enter__(self) -> "_DBConn":
+        return self
+
+    def __exit__(self, *exc: Any) -> bool:
+        self.close()
+        return False
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Connection factory
+# ═══════════════════════════════════════════════════════════════════════════
+
+def connect() -> _DBConn:
+    """Return a ``_DBConn`` wrapping either psycopg2 or sqlite3."""
+    if _use_pg():
+        raw = psycopg2.connect(_get_db_url(), cursor_factory=RealDictCursor)
+        return _DBConn(raw, is_pg=True)
+    raw = sqlite3.connect(DB_PATH, check_same_thread=False)
+    raw.row_factory = sqlite3.Row
+    raw.execute("PRAGMA foreign_keys = ON")
+    raw.execute("PRAGMA journal_mode = WAL")
+    return _DBConn(raw, is_pg=False)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Streamlit page config (must be the first st.* call)
+# ═══════════════════════════════════════════════════════════════════════════
 
 st.set_page_config(
     page_title="Real-Time Sports Auction Portal",
@@ -322,82 +469,139 @@ def asset_css() -> str:
     """
 
 
-def connect() -> sqlite3.Connection:
-    con = sqlite3.connect(DB_PATH, check_same_thread=False)
-    con.row_factory = sqlite3.Row
-    con.execute("PRAGMA foreign_keys = ON")
-    con.execute("PRAGMA journal_mode = WAL")
-    return con
+# ═══════════════════════════════════════════════════════════════════════════
+# Database initialisation
+# ═══════════════════════════════════════════════════════════════════════════
+
+_PG_DDL = """
+CREATE TABLE IF NOT EXISTS players (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    category        TEXT NOT NULL DEFAULT 'Player',
+    batting         TEXT,
+    bowling         TEXT,
+    base_price      INTEGER NOT NULL DEFAULT 10000,
+    matches         DOUBLE PRECISION,
+    innings         DOUBLE PRECISION,
+    runs            DOUBLE PRECISION,
+    average         DOUBLE PRECISION,
+    strike_rate     DOUBLE PRECISION,
+    best_score      TEXT,
+    wickets         DOUBLE PRECISION,
+    economy         DOUBLE PRECISION,
+    fielding_dismissals DOUBLE PRECISION,
+    profile_url     TEXT,
+    status          TEXT NOT NULL DEFAULT 'AVAILABLE',
+    sold_team       TEXT,
+    sold_price      INTEGER,
+    bid_count       INTEGER NOT NULL DEFAULT 0,
+    picked_at       TEXT,
+    sold_at         TEXT,
+    updated_at      TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS teams (
+    name            TEXT PRIMARY KEY,
+    captain_name    TEXT,
+    logo_url        TEXT,
+    starting_purse  INTEGER NOT NULL,
+    max_squad_size  INTEGER NOT NULL,
+    min_roster_size INTEGER NOT NULL,
+    created_at      TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS auction_state (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id          SERIAL PRIMARY KEY,
+    action      TEXT NOT NULL,
+    player_id   TEXT,
+    team_name   TEXT,
+    amount      INTEGER,
+    bid_count   INTEGER,
+    note        TEXT,
+    created_at  TEXT NOT NULL
+);
+"""
+
+_SQLITE_DDL = """
+CREATE TABLE IF NOT EXISTS players (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'Player',
+    batting TEXT,
+    bowling TEXT,
+    base_price INTEGER NOT NULL DEFAULT 10000,
+    matches REAL,
+    innings REAL,
+    runs REAL,
+    average REAL,
+    strike_rate REAL,
+    best_score TEXT,
+    wickets REAL,
+    economy REAL,
+    fielding_dismissals REAL,
+    profile_url TEXT,
+    status TEXT NOT NULL DEFAULT 'AVAILABLE',
+    sold_team TEXT,
+    sold_price INTEGER,
+    bid_count INTEGER NOT NULL DEFAULT 0,
+    picked_at TEXT,
+    sold_at TEXT,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS teams (
+    name TEXT PRIMARY KEY,
+    captain_name TEXT,
+    logo_url TEXT,
+    starting_purse INTEGER NOT NULL,
+    max_squad_size INTEGER NOT NULL,
+    min_roster_size INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS auction_state (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    action TEXT NOT NULL,
+    player_id TEXT,
+    team_name TEXT,
+    amount INTEGER,
+    bid_count INTEGER,
+    note TEXT,
+    created_at TEXT NOT NULL
+);
+"""
 
 
 def init_db() -> None:
     with closing(connect()) as con:
-        con.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS players (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                category TEXT NOT NULL DEFAULT 'Player',
-                batting TEXT,
-                bowling TEXT,
-                base_price INTEGER NOT NULL DEFAULT 10000,
-                matches REAL,
-                innings REAL,
-                runs REAL,
-                average REAL,
-                strike_rate REAL,
-                best_score TEXT,
-                wickets REAL,
-                economy REAL,
-                fielding_dismissals REAL,
-                profile_url TEXT,
-                
-                status TEXT NOT NULL DEFAULT 'AVAILABLE',
-                sold_team TEXT,
-                sold_price INTEGER,
-                bid_count INTEGER NOT NULL DEFAULT 0,
-                picked_at TEXT,
-                sold_at TEXT,
-                updated_at TEXT NOT NULL
-            );
+        # ── Create tables ─────────────────────────────────────────────
+        if _use_pg():
+            con.execute(_PG_DDL)
+            # Column migration (PG supports IF NOT EXISTS on ALTER)
+            con.execute("ALTER TABLE teams ADD COLUMN IF NOT EXISTS captain_name TEXT")
+            con.execute("ALTER TABLE teams ADD COLUMN IF NOT EXISTS logo_url TEXT")
+        else:
+            con.executescript(_SQLITE_DDL)
+            # Column migration for older SQLite databases
+            cursor = con.execute("PRAGMA table_info(teams)")
+            columns = [row["name"] for row in cursor.fetchall()]
+            if columns:
+                if "captain_name" not in columns:
+                    con.execute("ALTER TABLE teams ADD COLUMN captain_name TEXT")
+                if "logo_url" not in columns:
+                    con.execute("ALTER TABLE teams ADD COLUMN logo_url TEXT")
 
-            CREATE TABLE IF NOT EXISTS teams (
-                name TEXT PRIMARY KEY,
-                captain_name TEXT,
-                logo_url TEXT,
-                starting_purse INTEGER NOT NULL,
-                max_squad_size INTEGER NOT NULL,
-                min_roster_size INTEGER NOT NULL,
-                created_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS auction_state (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS audit_log (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                action TEXT NOT NULL,
-                player_id TEXT,
-                team_name TEXT,
-                amount INTEGER,
-                bid_count INTEGER,
-                note TEXT,
-                created_at TEXT NOT NULL
-            );
-            """
-        )
-        
-        # Run table migration to add columns if they don't exist
-        cursor = con.execute("PRAGMA table_info(teams)")
-        columns = [row["name"] for row in cursor.fetchall()]
-        if columns:
-            if "captain_name" not in columns:
-                con.execute("ALTER TABLE teams ADD COLUMN captain_name TEXT")
-            if "logo_url" not in columns:
-                con.execute("ALTER TABLE teams ADD COLUMN logo_url TEXT")
-
+        # ── Seed default teams if empty ───────────────────────────────
         if not con.execute("SELECT 1 FROM teams LIMIT 1").fetchone():
             now = utc_now()
             con.executemany(
@@ -415,15 +619,15 @@ def init_db() -> None:
 
 
 def utc_now() -> str:
-    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def get_state(con: sqlite3.Connection, key: str, default: str | None = None) -> str | None:
+def get_state(con: _DBConn, key: str, default: str | None = None) -> str | None:
     row = con.execute("SELECT value FROM auction_state WHERE key = ?", (key,)).fetchone()
     return row["value"] if row else default
 
 
-def set_state(con: sqlite3.Connection, key: str, value: str | None) -> None:
+def set_state(con: _DBConn, key: str, value: str | None) -> None:
     con.execute(
         "INSERT INTO auction_state(key, value) VALUES (?, ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -431,12 +635,12 @@ def set_state(con: sqlite3.Connection, key: str, value: str | None) -> None:
     )
 
 
-def rows(query: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
+def rows(query: str, params: tuple[Any, ...] = ()) -> list[Any]:
     with closing(connect()) as con:
         return con.execute(query, params).fetchall()
 
 
-def one(query: str, params: tuple[Any, ...] = ()) -> sqlite3.Row | None:
+def one(query: str, params: tuple[Any, ...] = ()) -> Any | None:
     with closing(connect()) as con:
         return con.execute(query, params).fetchone()
 
@@ -514,7 +718,6 @@ def load_excel_players(path: Path, base_price: int) -> pd.DataFrame:
         player_id = clean_text(row.get("Player ID")) or f"P{idx + 1:03d}"
         batting = clean_text(response.get("Batting")) if response is not None else ""
         bowling = clean_text(response.get("Bowling")) if response is not None else ""
-        #photo = clean_text(response.get("Photo")) if response is not None else ""
         records.append(
             {
                 "id": player_id,
@@ -658,7 +861,7 @@ def get_min_base_price() -> int:
     return int(row["min_base"] or 50000) if row else 50000
 
 
-def active_player() -> sqlite3.Row | None:
+def active_player() -> Any | None:
     with closing(connect()) as con:
         active_id = get_state(con, "active_player_id")
         if not active_id:
@@ -666,7 +869,7 @@ def active_player() -> sqlite3.Row | None:
         return con.execute("SELECT * FROM players WHERE id = ?", (active_id,)).fetchone()
 
 
-def draw_player() -> sqlite3.Row | None:
+def draw_player() -> Any | None:
     with closing(connect()) as con:
         available = con.execute(
             "SELECT * FROM players WHERE status = 'AVAILABLE' ORDER BY RANDOM() LIMIT 1"
@@ -741,59 +944,32 @@ def mark_unsold(player_id: str, note: str = "") -> None:
         con.commit()
 
 
-def restore_player(player_id: str) -> None:
-
-    player = one(
-        "SELECT name FROM players WHERE id=?",
-        (player_id,)
-    )
-
+def reset_player(player_id: str) -> None:
+    """Return a player to AVAILABLE (or CAPTAIN if they are a team captain)."""
+    player = one("SELECT name FROM players WHERE id=?", (player_id,))
     captain_names = {
         r["captain_name"].strip().lower()
-        for r in rows(
-            "SELECT captain_name FROM teams"
-        )
+        for r in rows("SELECT captain_name FROM teams")
         if r["captain_name"]
     }
-
     new_status = (
         "CAPTAIN"
         if player and player["name"].strip().lower() in captain_names
         else "AVAILABLE"
     )
-
     with closing(connect()) as con:
+        now = utc_now()
         con.execute(
-            """
-            UPDATE players
-            SET status=?, updated_at=?
-            WHERE id=?
-            """,
-            (
-                new_status,
-                utc_now(),
-                player_id,
-            ),
+            "UPDATE players SET status=?, sold_team=NULL, sold_price=NULL, bid_count=0, picked_at=NULL, sold_at=NULL, updated_at=? WHERE id=?",
+            (new_status, now, player_id),
         )
-
+        active_id = get_state(con, "active_player_id")
+        if active_id == player_id:
+            set_state(con, "active_player_id", None)
         con.execute(
-            """
-            INSERT INTO audit_log(
-                action,
-                player_id,
-                note,
-                created_at
-            )
-            VALUES (?, ?, ?, ?)
-            """,
-            (
-                "RESTORED",
-                player_id,
-                f"Restored as {new_status}",
-                utc_now(),
-            ),
+            "INSERT INTO audit_log(action, player_id, note, created_at) VALUES (?, ?, ?, ?)",
+            ("RESTORED", player_id, f"Reset to {new_status}", now),
         )
-
         con.commit()
 
 
@@ -835,7 +1011,7 @@ def render_header(status: str) -> None:
     )
 
 
-def render_player_card(player: sqlite3.Row | None) -> None:
+def render_player_card(player: Any | None) -> None:
     if player is None:
         st.markdown(
             """
@@ -898,7 +1074,7 @@ def _normalise(text: str) -> str:
     return " ".join("".join(ch for ch in text.lower() if ch.isalnum() or ch == " ").split())
 
 
-def find_player_image(player: sqlite3.Row) -> Path | None:
+def find_player_image(player: Any) -> Path | None:
     """Resolve the best photo for a player.
 
     Priority order:
@@ -1176,7 +1352,6 @@ def team_leaderboards() -> None:
 
 
 
-
 def manage_teams_panel() -> None:
     st.subheader("Manage Teams Configuration")
     team_list = rows("SELECT * FROM teams ORDER BY name")
@@ -1244,7 +1419,7 @@ def auction_control_panel() -> None:
         """
         <div class="panel" style="border-left: 4px solid var(--accent-2); padding: 15px; margin-bottom: 20px;">
           <strong style="color: var(--accent-2);">Real-Time Database Persistence:</strong><br>
-          All auction events, draws, bids, and team data are automatically and immediately saved to <code>auction.db</code>. 
+          All auction events, draws, bids, and team data are automatically and immediately saved to the database. 
           If the application server goes down or restarts, <strong>you will not lose any data</strong>. The next load will automatically resume exactly where you left off.
         </div>
         """,
@@ -1707,6 +1882,17 @@ def login() -> None:
     st.markdown(CSS, unsafe_allow_html=True)
     st.markdown(asset_css(), unsafe_allow_html=True)
     render_header("LOGIN")
+
+    # Check that passcodes are configured
+    admin_code = _get_passcode("admin")
+    viewer_code = _get_passcode("viewer")
+    if not admin_code and not viewer_code:
+        st.error(
+            "⚠️ **Passcodes not configured.**  "
+            "Set them in `.streamlit/secrets.toml` or via environment variables "
+            "`AUCTION_ADMIN_PASSCODE` / `AUCTION_VIEWER_PASSCODE`."
+        )
+
     left, right = st.columns([1, 1], gap="large")
     with left:
         if HOME_LOGO_PATH.exists():
@@ -1731,8 +1917,8 @@ def login() -> None:
             passcode = st.text_input("Passcode", type="password")
             submitted = st.form_submit_button("Enter Auction", type="primary", use_container_width=True)
         if submitted:
-            expected = ADMIN_PASSCODE if role == "Admin" else VIEWER_PASSCODE
-            if passcode == expected:
+            expected = _get_passcode(role)
+            if expected and passcode == expected:
                 st.session_state.role = role
                 st.rerun()
             else:

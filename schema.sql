@@ -101,10 +101,10 @@ CREATE TABLE IF NOT EXISTS audit_log (
 -- Seed Initial Teams (starting purse ₹25 Crore = 250000000)
 INSERT INTO teams (name, captain_name, logo_url, starting_purse, purse_remaining, max_squad_size, created_at)
 VALUES
-    ('Team Alpha',   'Dragleeoo',    '', 250000000, 250000000, 10, '2026-06-08T12:00:00Z'),
-    ('Team Bravo',   'Aman Jaiswal',  '', 250000000, 250000000, 10, '2026-06-08T12:00:00Z'),
-    ('Team Charlie', 'Swapneel',     '', 250000000, 250000000, 10, '2026-06-08T12:00:00Z'),
-    ('Team Delta',   'Sawon',        '', 250000000, 250000000, 10, '2026-06-08T12:00:00Z')
+    ('AMD SENA',   'Dragleeoo',    '', 250000000, 250000000, 10, '2026-06-08T12:00:00Z'),
+    ('PITCH PALS',   'Harshit Agarwal',  '', 250000000, 250000000, 10, '2026-06-08T12:00:00Z'),
+    ('INVICTUS XI', 'Swapneel',     '', 250000000, 250000000, 10, '2026-06-08T12:00:00Z'),
+    ('SHINING KNIGHTS',   'Sawon',        '', 250000000, 250000000, 10, '2026-06-08T12:00:00Z')
 ON CONFLICT (name) DO UPDATE SET
     captain_name = EXCLUDED.captain_name,
     starting_purse = EXCLUDED.starting_purse,

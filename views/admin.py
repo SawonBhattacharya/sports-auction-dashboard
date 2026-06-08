@@ -4,12 +4,24 @@ import random
 import re
 from html import escape
 from pathlib import Path
-from config import format_inr, CAPTAINS, MARQUEE_BASE_PRICE, is_captain_player
+from config import format_inr, CAPTAINS, MARQUEE_BASE_PRICE
 import models
+from models import is_captain_player
 import rules_engine
 from db import connect, closing, get_state, set_state, init_db
 import ui_components
 
+def render_admin():
+    init_db()
+    ui_components.inject_css()
+
+    ui_components.render_league_poster()
+
+    st.html(
+        """
+        ...
+        """
+    )
 def render_admin() -> None:
     # Initialize DB tables on first access
     init_db()
@@ -212,16 +224,24 @@ def render_surprise_assignments_table() -> None:
         ORDER BY b.captain_name
         """
     )
-    by_captain = {row["captain_name"]: row for row in assignments}
-    teams = {team["captain_name"]: team["name"] for team in models.get_all_teams()}
+
+    by_captain = {
+        row["captain_name"]: row
+        for row in assignments
+    }
 
     table_rows = []
-    for captain_name in CAPTAINS.keys():
+
+    for team in models.get_all_teams():
+
+        captain_name = team["captain_name"]
+
         row = by_captain.get(captain_name)
+
         table_rows.append(
             {
                 "Captain": captain_name,
-                "Team": teams.get(captain_name, CAPTAINS[captain_name]),
+                "Team": team["name"],
                 "Surprise Player": row["player_name"] if row and row["player_name"] else "Not assigned",
                 "Seed": row["seeding"] if row and row["seeding"] else "-",
                 "Base Price": format_inr(row["base_price"]) if row and row["base_price"] is not None else "-",
@@ -229,7 +249,11 @@ def render_surprise_assignments_table() -> None:
             }
         )
 
-    st.dataframe(table_rows, hide_index=True, use_container_width=True)
+    st.dataframe(
+        table_rows,
+        hide_index=True,
+        use_container_width=True
+    )
 
 def render_pre_auction_wizard() -> None:
     st.subheader("🏁 Pre-Auction Setup Wizard")
@@ -294,7 +318,8 @@ def render_pre_auction_wizard() -> None:
         st.info("No Marquee Draft Order decided yet.")
         
     if st.button("Randomize & Set Marquee Draft Order", use_container_width=True):
-        caps = list(CAPTAINS.keys())
+        caps = [t["captain_name"] for t in models.get_all_teams()]
+
         random.shuffle(caps)
         with connect() as con:
             set_state(con, "marquee_draft_order", json.dumps(caps))
@@ -328,7 +353,10 @@ def render_pre_auction_wizard() -> None:
         random.shuffle(pool)
         
         with connect() as con:
-            for idx, cname in enumerate(CAPTAINS.keys()):
+            teams = models.get_all_teams()
+
+            for idx, team in enumerate(teams):
+                cname = team["captain_name"]
                 jt = pool[idx]
                 con.execute("UPDATE teams SET joker_type = ? WHERE captain_name = ?", (jt, cname))
             con.commit()
@@ -339,31 +367,7 @@ def render_pre_auction_wizard() -> None:
         
     st.html('</div>')
     
-    # ── STEP 4.5: Auto-Assign Surprise Players ──
-    st.html('<div class="admin-section">')
-    st.markdown("### 🎁 Step 4.5: Auto-Assign Surprise Players")
-    st.caption("Randomly assign exactly 1 unique non-marquee player to each captain as their surprise player.")
-
-    surprise_count = len(models.get_all_surprise_players())
-    surprise_assigned = surprise_count == len(CAPTAINS)
-    if surprise_assigned:
-        st.success("Surprise players have been assigned.")
-    else:
-        if st.button("Auto-Assign Surprise Players", use_container_width=True):
-            available_for_surprise = models.rows("SELECT id, name FROM players WHERE status='AVAILABLE' AND is_marquee=FALSE")
-            available_for_surprise = [p for p in available_for_surprise if not is_captain_player(p["name"])]
-            if len(available_for_surprise) >= len(CAPTAINS):
-                chosen_players = random.sample(available_for_surprise, len(CAPTAINS))
-                for i, captain_name in enumerate(CAPTAINS.keys()):
-                    player_id = chosen_players[i]["id"]
-                    models.save_surprise_player(captain_name, player_id)
-                models.log_action("SURPRISE_ASSIGN", note="Auto-assigned surprise players for all captains.")
-                st.success("Surprise players automatically assigned!")
-                st.rerun()
-            else:
-                st.error("Not enough available non-marquee players to assign surprise players.")
-    render_surprise_assignments_table()
-    st.html('</div>')
+    
     
     # ── STEP 5: Verification Checklist & Launch ──
     st.html('<div class="admin-section">')
@@ -381,7 +385,13 @@ def render_pre_auction_wizard() -> None:
     st.write(f"• Surprise Selections Submitted: **{surprise_count} / 4**")
     st.write(f"• Prediction Tax Submissions: **{pred_count} / 8** (Max)")
     
-    is_ready = total_players > 0 and jokers_assigned and completed == 'TRUE'
+    is_ready = (
+        total_players > 0
+        and jokers_assigned
+        and completed == 'TRUE'
+        and surprise_count == len(models.get_all_teams())
+    )
+
     
     if not is_ready:
         st.warning("All setups must be completed before starting the auction.")
@@ -479,7 +489,7 @@ def render_live_auction_console(
             
             # Fetch all available player names to populate the wheel segments
             available = models.get_available_players()
-            from config import is_captain_player
+            from models import is_captain_player
             player_names = [p["name"] for p in available if p["id"] != spin_target and not p.get("is_marquee") and not is_captain_player(p["name"])]
             player_names = player_names[:7] + [target_p["name"]]
             

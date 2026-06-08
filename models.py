@@ -267,14 +267,55 @@ def clear_marquee_nominations() -> None:
 
 # ── Surprise Players & Predictions CRUD ──────────────────────────────────────
 
-def save_surprise_player(captain_name: str, player_id: str) -> None:
+def save_surprise_player(
+    captain_name: str,
+    player_id: str
+) -> None:
+
+    existing = one(
+        """
+        SELECT 1
+        FROM pre_auction_bets
+        WHERE captain_name = ?
+        AND bet_type = 'SURPRISE'
+        """,
+        (captain_name,)
+    )
+
+    if existing:
+        execute(
+            """
+            DELETE FROM pre_auction_bets
+            WHERE captain_name = ?
+            AND bet_type = 'SURPRISE'
+            """,
+            (captain_name,)
+        )
+
     now = utc_now()
-    # Delete existing surprise player selection for this captain first
-    execute("DELETE FROM pre_auction_bets WHERE captain_name = ? AND bet_type = 'SURPRISE'", (captain_name,))
-    # SQLite fallback insert
+
     execute(
-        "INSERT INTO pre_auction_bets (captain_name, bet_type, target_player_id, created_at) VALUES (?, 'SURPRISE', ?, ?)",
-        (captain_name, player_id, now)
+        """
+        INSERT INTO pre_auction_bets
+        (
+            captain_name,
+            bet_type,
+            target_player_id,
+            created_at
+        )
+        VALUES
+        (
+            ?,
+            'SURPRISE',
+            ?,
+            ?
+        )
+        """,
+        (
+            captain_name,
+            player_id,
+            now
+        )
     )
 
 def get_surprise_player(captain_name: str) -> Optional[str]:
@@ -376,3 +417,31 @@ def log_action(action: str, player_id: Optional[str] = None, team_name: Optional
 
 def get_audit_logs() -> list[dict]:
     return rows("SELECT * FROM audit_log ORDER BY id DESC")
+
+def get_all_captains() -> list[str]:
+    rows_data = rows(
+        "SELECT captain_name FROM teams ORDER BY captain_name"
+    )
+    return [r["captain_name"] for r in rows_data]
+
+def get_team_names():
+    return [
+        t["name"]
+        for t in get_all_teams()
+    ]
+
+def is_captain_player(player_name):
+
+    if not player_name:
+        return False
+
+    name_lower = player_name.lower()
+
+    for team in get_all_teams():
+
+        captain = team["captain_name"]
+
+        if captain.lower() in name_lower:
+            return True
+
+    return False

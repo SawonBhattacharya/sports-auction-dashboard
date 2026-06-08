@@ -2,6 +2,23 @@ import streamlit as st
 from config import PASSCODES, CAPTAINS
 from ui_components import inject_css, render_footer
 
+from ui_components import (
+    inject_css,
+    render_footer,
+    render_league_poster
+)
+
+def render_login():
+    inject_css()
+
+    render_league_poster()
+
+    st.html(
+        """
+        ...
+        """
+    )
+    
 def render_login() -> None:
     inject_css()
     
@@ -19,7 +36,7 @@ def render_login() -> None:
         st.html('<div class="glass-card">')
         st.subheader("Sign In")
         
-        role_options = ["Viewer", "Admin", "Sawon", "Dragleeoo", "Swapneel", "Aman Jaiswal"]
+        role_options = ["Viewer", "Admin", "Sawon", "Dragleeoo", "Swapneel", "Harshit Agarwal"]
         selected_role = st.selectbox("Select Your Role", role_options)
         
         passcode = st.text_input("Enter Passcode", type="password")

@@ -1,12 +1,15 @@
+from tenacity import before_sleep
 import streamlit as st
 import json
-from config import format_inr, CAPTAINS, is_captain_player
+from config import format_inr, CAPTAINS
+from models import is_captain_player
 import models
 from db import connect, closing, get_state, set_state
-from ui_components import render_header, render_footer, inject_css, render_team_progress_grid, render_team_squad_rows, render_player_card, render_spin_wheel, render_sale_celebration
+from ui_components import render_header, render_footer, inject_css, render_team_progress_grid, render_team_squad_rows, render_player_card, render_spin_wheel, render_sale_celebration,render_league_poster
 import rules_engine
 
 def render_captain() -> None:
+    render_league_poster()
     inject_css()
     render_sale_celebration()
     
@@ -46,18 +49,76 @@ def render_captain() -> None:
         st.markdown("### 🎁 Surprise Player Selection")
         st.write("Select one player secretly. If you buy him, you get a bonus of 10% of his purchase price or ₹25 Lakhs (whichever is higher).")
         
-        all_players = [p for p in models.get_all_players() if not is_captain_player(p["name"])]
-        player_options = {p["name"]: p["id"] for p in all_players}
+        prediction_players = models.rows("""
+            SELECT id,name,seeding,base_price
+            FROM players
+            ORDER BY base_price DESC,name
+            """
+        )
+               
+        before = len(prediction_players)
+
+        prediction_players = [
+            p for p in prediction_players
+            if not is_captain_player(p["name"])
+        ]
+
+        st.write("Before filter:", before)
+        st.write("After filter:", len(prediction_players))
         
-        # Current choice
+        player_options = {
+            p["name"]: p["id"]
+            for p in prediction_players
+        }
+        
+        
+        st.markdown("### 🎁 Surprise Player Selection")
+
         current_surprise_id = models.get_surprise_player(captain_name)
-        
-        if current_surprise_id:
-            current_surprise_name = next((name for name, pid in player_options.items() if pid == current_surprise_id), None)
-            st.info(f"Surprise Player: **{current_surprise_name}** (Assigned by Admin)")
-            st.write("If you buy him, you get a bonus of 10% of his purchase price or ₹25 Lakhs (whichever is higher).")
-        else:
-            st.info("Surprise Player will be assigned by the Admin.")
+
+        surprise_names = ["Select your surprise player..."] + list(player_options.keys())
+
+        current_surprise_name = next(
+            (
+                name
+                for name, pid in player_options.items()
+                if pid == current_surprise_id
+            ),
+            None
+        )
+
+        default_idx = (
+            surprise_names.index(current_surprise_name)
+            if current_surprise_name in surprise_names
+            else 0
+        )
+
+        selected_surprise = st.selectbox(
+            "Choose your Surprise Player",
+            surprise_names,
+            index=default_idx,
+            key="surprise_player"
+        )
+
+        if st.button("💾 Save Surprise Player"):
+            # Remove old surprise choice
+            models.execute(
+                """
+                DELETE FROM pre_auction_bets
+                WHERE captain_name = ?
+                AND bet_type = 'SURPRISE'
+                """,
+                (captain_name,)
+            )
+
+            # Save new surprise choice
+            if selected_surprise != "Select player...":
+                models.save_surprise_player(
+                    captain_name,
+                    player_options[selected_surprise]
+                )
+                st.success("Surprise Player saved.")
+                st.rerun()
 
         your_marquee = models.one(
             "SELECT * FROM players WHERE is_marquee=TRUE AND marquee_nominator = ? LIMIT 1",
@@ -98,20 +159,37 @@ def render_captain() -> None:
                 disabled=is_disabled
             )
             
-            if selected_pred != "No prediction...":
-                pred_pid = player_options[selected_pred]
-                if pred_pid != cur_pred_id:
-                    models.save_prediction(captain_name, rival, pred_pid)
-                    st.success(f"Saved prediction for {rival} -> {selected_pred}")
+            if st.button(
+                f"Save Prediction for {rival}",
+                key=f"save_pred_{rival}"
+            ):
+                if selected_pred == "No prediction...":
+                    models.execute(
+                        """
+                        DELETE FROM pre_auction_bets
+                        WHERE captain_name = ?
+                        AND bet_type = 'PREDICTION'
+                        AND target_captain = ?
+                        """,
+                        (captain_name, rival)
+                    )
+
+                    st.success(f"Prediction cleared for {rival}")
                     st.rerun()
-            elif cur_pred_id:
-                # If they select "No prediction...", delete the existing one
-                models.execute(
-                    "DELETE FROM pre_auction_bets WHERE captain_name = ? AND bet_type = 'PREDICTION' AND target_captain = ?",
-                    (captain_name, rival)
-                )
-                st.info(f"Cleared prediction for {rival}")
-                st.rerun()
+
+                else:
+                    pred_pid = player_options[selected_pred]
+
+                    models.save_prediction(
+                        captain_name,
+                        rival,
+                        pred_pid
+                    )
+
+                    st.success(
+                        f"Prediction saved: {rival} → {selected_pred}"
+                    )
+                    st.rerun()
                 
         if num_preds >= 2:
             st.warning("You have reached the maximum of 2 prediction taxes. Other options are disabled.")
@@ -152,7 +230,17 @@ def render_captain() -> None:
                 already_nominated_ids = {m["id"] for m in models.get_marquee_players()}
                 available_for_marquee = [p for p in available_for_marquee if p["id"] not in already_nominated_ids and not is_captain_player(p["name"])]
                 am_options = {f"{p['name']} ({p['seeding']})": p["id"] for p in available_for_marquee}
-                
+                st.write("Raw player count:",len(models.rows("SELECT id FROM players")))
+
+                st.write("Available count:",
+                        len(models.rows("""
+                            SELECT id
+                            FROM players
+                            WHERE status='AVAILABLE'
+                        """)))
+
+                st.write("Marquee candidates:",len(available_for_marquee))
+
                 draft_names = ["Select a player to nominate..."] + list(am_options.keys())
                 selected_draft = st.selectbox("Choose Marquee Player", draft_names, key="marquee_draft_sel")
                 
@@ -309,7 +397,16 @@ def render_captain() -> None:
                     ).fetchone()
                 
                 if existing:
-                    st.info(f"You have submitted a silent bid of: **{format_inr(existing['bid_amount'] if not con._pg else existing[0])}**. You can update it below.")
+                    bid_amount = (
+                        existing["bid_amount"]
+                        if isinstance(existing, dict)
+                        else existing[0]
+                    )
+
+                    st.info(
+                        f"You have submitted a silent bid of "
+                        f"{format_inr(bid_amount)}"
+                    )
                     
                 silent_amt = st.number_input(
                     "Your Silent Max Bid (INR)",

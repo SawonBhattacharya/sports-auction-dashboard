@@ -27,7 +27,7 @@ The platform is gated by a central **Login Portal**. Roles are defined by passco
 **Available Roles:**
 1. **Admin** (Control center)
 2. **Viewer** (Read-only audience interface)
-3. **Captains** (Sawon, Dragleeoo, Swapneel, Aman Jaiswal)
+3. **Captains** (Sawon, Dragleeoo, Swapneel, Harshit Agarwal)
 
 *Upon logging in, the app securely stores the role in the session state and updates URL parameters to route the user to their designated dashboard.*
 

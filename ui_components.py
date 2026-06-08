@@ -367,7 +367,7 @@ def render_header(title: str, active_captain_turn: str = None) -> None:
     
     # Render 4 Captain summaries in columns
     cols = st.columns(4)
-    for i, name in enumerate(["Sawon", "Dragleeoo", "Swapneel", "Aman Jaiswal"]):
+    for i, name in enumerate(["Sawon", "Dragleeoo", "Swapneel", "Harshit Agarwal"]):
         t = team_map.get(name)
         if not t:
             continue
@@ -917,3 +917,26 @@ def render_team_progress_grid(db, is_live=False) -> None:
         </div>
         """
         cols[i].html(textwrap.dedent(html))
+
+def render_league_poster():
+    poster_path = Path("images/league_poster.jpeg")  # change filename
+
+    if poster_path.exists():
+        st.markdown(
+            """
+            <div style="margin-bottom:20px;">
+            """,
+            unsafe_allow_html=True,
+        )
+
+        st.image(
+            str(poster_path),
+            use_container_width=True
+        )
+
+        st.markdown(
+            """
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )

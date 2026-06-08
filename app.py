@@ -66,7 +66,7 @@ def main() -> None:
     elif role == "Viewer":
         run_viewer_screen()
     else:
-        # Captain roles (Sawon, Dragleeoo, Swapneel, Aman Jaiswal)
+        # Captain roles (Sawon, Dragleeoo, Swapneel, Harshit Agarwal)
         global_status = db.one("SELECT value FROM auction_state WHERE key = 'auction_status'")
         status_val = global_status["value"] if global_status else "PRE_AUCTION"
         

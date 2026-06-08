@@ -5,10 +5,10 @@ INITIAL_PURSE = 25_00_00_000
 
 # Captain mappings
 CAPTAINS = {
-    "Sawon": "Team Delta",
-    "Dragleeoo": "Team Alpha",
-    "Swapneel": "Team Charlie",
-    "Aman Jaiswal": "Team Bravo",
+    "Sawon": "SHINING KNIGHTS",
+    "Dragleeoo": "AMD SENA",
+    "Swapneel": "INVICTUS XI",
+    "Harshit Agarwal": "PITCH PALS",
 }
 
 def get_passcodes() -> dict:
@@ -22,12 +22,12 @@ def get_passcodes() -> dict:
         pass
     # Fallback for testing/CLI
     return {
-        "Admin": "admin123",
-        "Viewer": "viewer123",
+        "Admin": "LCL_Admin@2026#S2",
+        "Viewer": "LCL",
         "Sawon": "sawon123",
         "Dragleeoo": "drag123",
         "Swapneel": "swap123",
-        "Aman Jaiswal": "aman123",
+        "Harshit Agarwal": "harshit123",
     }
 
 PASSCODES = get_passcodes()
@@ -83,12 +83,4 @@ def format_inr(amount: int) -> str:
     else:
         return f"₹{lakh:.2f} Lakh".rstrip('0').rstrip('.')
 
-def is_captain_player(player_name: str) -> bool:
-    """Returns True if the player_name matches or contains any captain name."""
-    if not player_name:
-        return False
-    name_lower = player_name.lower()
-    for cap in CAPTAINS.keys():
-        if cap.lower() in name_lower:
-            return True
-    return False
+

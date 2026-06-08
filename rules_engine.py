@@ -85,24 +85,34 @@ def calculate_max_bid(team_name: str, active_player_id: str, squad_target: int) 
     max_bid = current_purse - reserve_required
     return max(0, max_bid)
 
-def check_surprise_bonus(buyer_team_name: str, player_id: str, sold_price: int) -> int:
+def check_surprise_bonus(team_name: str,
+    player_id: str,
+    sold_price: int) -> int:
     """Checks if the sold player matches the buyer's surprise player.
     If true, returns the bonus credit amount: Max(10% of sold price, ₹25 Lakhs).
     Otherwise returns 0.
     """
-    team = models.get_team(buyer_team_name)
+    from config import BONUS_FLOOR
+    import models
+
+    team = models.get_team(team_name)
+
     if not team:
         return 0
-        
+
     captain_name = team["captain_name"]
-    secret_player_id = models.get_surprise_player(captain_name)
-    
-    if secret_player_id and secret_player_id == player_id:
-        # Calculate bonus
-        bonus = int(0.10 * sold_price)
-        return max(bonus, BONUS_FLOOR)
-        
-    return 0
+
+    surprise_player = models.get_surprise_player(
+        captain_name
+    )
+
+    if surprise_player != player_id:
+        return 0
+
+    return max(
+        BONUS_FLOOR,
+        int(sold_price * 0.10)
+    )
 
 def check_prediction_taxes(buyer_team_name: str, player_id: str, sold_price: int) -> list[dict]:
     """Checks if the sold player triggers any prediction tax penalty.

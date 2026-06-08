@@ -70,7 +70,7 @@ def render_captain() -> None:
         st.html("<hr style='border-color: rgba(255,255,255,0.08);'>")
         
         # 2b. Prediction Tax Entries
-        st.html("### 🔮 Prediction Tax Entries")
+        st.markdown("### 🔮 Prediction Tax Entries")
         st.write("Predict which rival captain will buy which player. (Submit up to 2 secret predictions).")
         st.caption("If they buy that player, they will be penalized 10% of the purchase price or ₹25 Lakhs.")
         
@@ -116,7 +116,7 @@ def render_captain() -> None:
         if num_preds >= 2:
             st.warning("You have reached the maximum of 2 prediction taxes. Other options are disabled.")
                 
-        st.markdown("<hr style='border-color: rgba(255,255,255,0.08);'>")
+        st.html("<hr style='border-color: rgba(255,255,255,0.08);'>")
         
         # 2c. Marquee Nomination Turn-Based Flow
         st.markdown("### 👑 Marquee Player Selection")

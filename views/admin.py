@@ -264,7 +264,7 @@ def render_pre_auction_wizard() -> None:
 
     # ── STEP 2: Squad Size Configuration ──
     st.html('<div class="admin-section">')
-    st.html("### 📏 Step 2: Squad Size Limits")
+    st.markdown("### 📏 Step 2: Squad Size Limits")
     st.caption("Decide the tournament squad size per team. All teams are seeded with captains.")
     
     current_teams = models.get_all_teams()
@@ -276,7 +276,7 @@ def render_pre_auction_wizard() -> None:
     if st.button("Apply Squad Size Limit", use_container_width=True):
         models.update_squad_size_limit(selected_limit)
         st.success(f"Roster limits updated to {selected_limit} players (including Captain) per team.")
-    st.markdown('</div>')
+    st.html('</div>')
     
     # ── STEP 3: Marquee Selection Order ──
     st.html('<div class="admin-section">')
@@ -341,7 +341,7 @@ def render_pre_auction_wizard() -> None:
     
     # ── STEP 4.5: Auto-Assign Surprise Players ──
     st.html('<div class="admin-section">')
-    st.html("### 🎁 Step 4.5: Auto-Assign Surprise Players")
+    st.markdown("### 🎁 Step 4.5: Auto-Assign Surprise Players")
     st.caption("Randomly assign exactly 1 unique non-marquee player to each captain as their surprise player.")
 
     surprise_count = len(models.get_all_surprise_players())
@@ -363,7 +363,7 @@ def render_pre_auction_wizard() -> None:
             else:
                 st.error("Not enough available non-marquee players to assign surprise players.")
     render_surprise_assignments_table()
-    st.markdown('</div>')
+    st.html('</div>')
     
     # ── STEP 5: Verification Checklist & Launch ──
     st.html('<div class="admin-section">')

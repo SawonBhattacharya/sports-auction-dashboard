@@ -25,8 +25,11 @@ def render_login() -> None:
         passcode = st.text_input("Enter Passcode", type="password")
         
         if st.button("Access Dashboard", use_container_width=True):
-            # Safe case-insensitive lookup
-            expected = next((v for k, v in PASSCODES.items() if k.lower() == selected_role.lower()), None)
+            # Try exact match first (e.g. "Admin")
+            expected = PASSCODES.get(selected_role)
+            # Fallback to case-insensitive if exact match fails
+            if expected is None:
+                expected = next((v for k, v in PASSCODES.items() if k.lower() == selected_role.lower()), None)
             
             # Simple check
             if expected is not None and passcode == expected:

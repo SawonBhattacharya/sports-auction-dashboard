@@ -22,8 +22,8 @@ def get_passcodes() -> dict:
         pass
     # Fallback for testing/CLI
     return {
-        "admin": "admin123",
-        "viewer": "viewer123",
+        "Admin": "admin123",
+        "Viewer": "viewer123",
         "Sawon": "sawon123",
         "Dragleeoo": "drag123",
         "Swapneel": "swap123",

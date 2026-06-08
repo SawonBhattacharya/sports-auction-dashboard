@@ -25,10 +25,11 @@ def render_login() -> None:
         passcode = st.text_input("Enter Passcode", type="password")
         
         if st.button("Access Dashboard", use_container_width=True):
-            expected = PASSCODES.get(selected_role, "")
+            # Safe case-insensitive lookup
+            expected = next((v for k, v in PASSCODES.items() if k.lower() == selected_role.lower()), None)
             
             # Simple check
-            if passcode == expected or expected == "":
+            if expected is not None and passcode == expected:
                 st.query_params["role"] = selected_role
                 st.session_state["logged_in"] = True
                 st.session_state["role"] = selected_role

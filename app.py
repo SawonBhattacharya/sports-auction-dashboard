@@ -8,8 +8,42 @@ st.set_page_config(
     page_title="LCL Auction 2026",
     page_icon="🏆",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="expanded", # Forces sidebar open on initial load
 )
+
+st.markdown("""
+<style>
+/* 1. Sidebar button styling for dark mode */
+section[data-testid="stSidebar"] button {
+    color: white !important;
+    background-color: #2d2d2d !important;
+    border: 1px solid #555 !important;
+}
+
+/* Hover effect */
+section[data-testid="stSidebar"] button:hover {
+    background-color: #444 !important;
+    border: 1px solid #888 !important;
+}
+
+/* Sidebar text visibility */
+section[data-testid="stSidebar"] {
+    color: white !important;
+}
+
+/* 2. THE FIX: Completely hide the collapse button so the sidebar stays permanently open/fixed */
+button[data-testid="stSidebarCollapseButton"],
+[data-testid="stSidebarCollapseButton"] {
+    display: none !important;
+    visibility: hidden !important;
+}
+
+/* Readjust main content padding slightly to blend perfectly with a permanent sidebar */
+[data-testid="stAppViewBlockContainer"] {
+    padding-top: 3rem !important;
+}
+</style>
+""", unsafe_allow_html=True)
 
 from views.login import render_login
 from views.viewer import render_viewer

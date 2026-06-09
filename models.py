@@ -82,6 +82,7 @@ def import_players_from_excel(path: Path, replace_existing: bool = True) -> int:
             batting = clean_text(row.get("Batting"))
             bowling = clean_text(row.get("Bowling"))
             bowling_preference = clean_text(row.get("Bowling Preference"))
+            fielding_dismissals = clean_text(row.get("Fielding Dismissals"))
             profile_url = clean_text(row.get("Profile"))
             # Extract URL if hyperlink formula
             url_match = re.search(r'HYPERLINK\("([^"]+)"', profile_url, re.IGNORECASE)

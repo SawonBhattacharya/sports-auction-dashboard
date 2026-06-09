@@ -451,7 +451,9 @@ def render_captain() -> None:
                             models.log_action("BONUS", player_id=active_player["id"], team_name=tname, amount=bonus, note=f"Surprise Player Bonus activated: +{format_inr(bonus)}")
                             
                         # Apply Prediction Tax check (Buying captain penalized)
-                        taxes = rules_engine.check_prediction_taxes(tname, active_player["id"], rev_bid)
+                        current_teams = models.get_all_teams()
+                        curr_limit = current_teams[0]["max_squad_size"] if current_teams else 10
+                        taxes = rules_engine.check_prediction_taxes(tname, active_player["id"],curr_limit,active_player["base_price"], rev_bid)
                         for tax in taxes:
                             buyer_t = models.get_team(tname)
                             models.update_team_purse(tname, buyer_t["purse_remaining"] - tax["tax_amount"])
@@ -477,7 +479,7 @@ def render_captain() -> None:
                         models.log_action("BONUS", player_id=active_player["id"], team_name=high_bidder_tname, amount=bonus, note=f"Surprise Player Bonus activated: +{format_inr(bonus)}")
                         
                     # Apply Prediction Tax check (Buying captain penalized)
-                    taxes = rules_engine.check_prediction_taxes(high_bidder_tname, active_player["id"], rev_bid)
+                    taxes = rules_engine.check_prediction_taxes(high_bidder_tname, active_player["id"],curr_limit,active_player["base_price"], rev_bid)
                     for tax in taxes:
                         buyer_t = models.get_team(high_bidder_tname)
                         models.update_team_purse(high_bidder_tname, buyer_t["purse_remaining"] - tax["tax_amount"])

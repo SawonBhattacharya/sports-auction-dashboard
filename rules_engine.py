@@ -1,3 +1,4 @@
+from altair import datasets
 from typing import Any, Optional, Tuple
 from config import BID_INCREMENTS, TIER_COSTS, BONUS_FLOOR, TAX_FLOOR, CAPTAINS
 import models
@@ -82,7 +83,7 @@ def calculate_max_bid(team_name: str, active_player_id: str, squad_target: int) 
     max_bid = current_purse - reserve_required
     return max(0, max_bid)
 
-def check_surprise_bonus(team_name: str, player_id: str, sold_price: int) -> int:
+def check_surprise_bonus(team_name: str, player_id: str, base_price:int, sold_price: int) -> int:
     """Checks if the sold player matches the buyer's surprise player.
     If true, returns the bonus credit amount: Max(10% of sold price, ₹25 Lakhs).
     Otherwise returns 0.
@@ -96,10 +97,14 @@ def check_surprise_bonus(team_name: str, player_id: str, sold_price: int) -> int
 
     if surprise_player != player_id:
         return 0
+    # Base defensive adjustment: at least 25L or 10% of base_price
+    if sold_price<BONUS_FLOOR:
+        return min(base_price,BONUS_FLOOR)
+    else:
+        calculated_bonus = max(0.10 * sold_price, BONUS_FLOOR)
+    return calculated_bonus
 
-    return max(BONUS_FLOOR, int(sold_price * 0.10))
-
-def check_prediction_taxes(buyer_team_name: str, player_id: str, sold_price: int) -> list[dict]:
+def check_prediction_taxes(buyer_team_name: str, player_id: str, squad_target:int,base_price:int, sold_price: int) -> list[dict]:
     """Checks if the sold player triggers any prediction tax penalty.
     A prediction tax is assessed when a captain correctly predicted that the buying captain
     would purchase the player.
@@ -118,17 +123,26 @@ def check_prediction_taxes(buyer_team_name: str, player_id: str, sold_price: int
     )
     
     triggered_predictions = []
-    tax_penalty = max(int(0.10 * sold_price), TAX_FLOOR)
+    # Inside penalty handler logic
+    if sold_price<TAX_FLOOR:
+        tax_penalty = min(base_price,TAX_FLOOR)
+    else:
+        tax_penalty = max(int(0.10 * sold_price), TAX_FLOOR)
     
-    for pred in all_preds:
-        predictor_captain = pred["captain_name"]
-        triggered_predictions.append({
-            "predictor_captain": predictor_captain,
-            "buying_captain": buyer_captain,
-            "tax_amount": tax_penalty
-        })
-        
-    return triggered_predictions
+    # Roster safety check before checking out
+    max_bid_available = calculate_max_bid(buyer_team_name, player_id, squad_target)
+    if (sold_price + tax_penalty) > max_bid_available:
+        return []
+    else:
+        for pred in all_preds:
+            predictor_captain = pred["captain_name"]
+            triggered_predictions.append({
+                "predictor_captain": predictor_captain,
+                "buying_captain": buyer_captain,
+                "tax_amount": tax_penalty
+            })
+            
+        return triggered_predictions
 
 def resolve_last_bid_joker(player_id: str) -> Optional[dict]:
     """Evaluates the silent bids submitted for a player when the Last Bid Joker is active.

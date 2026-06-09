@@ -156,6 +156,7 @@ def _ensure_player_detail_columns(con: _DBConn) -> None:
         "batting": "TEXT",
         "bowling": "TEXT",
         "bowling_preference": "TEXT",
+        "fielding_dismissals": "TEXT",
     }
     if con._pg:
         for column, column_type in detail_columns.items():

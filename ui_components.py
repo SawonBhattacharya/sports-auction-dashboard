@@ -667,14 +667,27 @@ def render_player_card(player_data: dict) -> None:
     base_price_fmt = format_inr(base_price)
     
     matches = player_data.get("matches") or "-"
-    runs = player_data.get("runs") or "-"
-    wickets = player_data.get("wickets") or "-"
-    strike_rate = player_data.get("strike_rate") or "-"
-    economy = player_data.get("economy") or "-"
-    average = player_data.get("average") or "-"
+    innings = int(player_data.get("innings") or 0)
+    if innings == 0:
+        innings = "-"
+    else:
+        innings = str(innings)
+    runs = int(player_data.get("runs") or 0)
+    wickets = int(player_data.get("wickets") or 0)
+    strike_rate = round(float(player_data.get("strike_rate") or 0), 2)
+    if strike_rate == 0:
+        strike_rate = '-'
+    economy = round(float(player_data.get("economy") or 0), 2)
+    if economy == 0:
+        economy = '-'
+    average = round(float(player_data.get("average") or 0), 2)
+    if average == 0:
+        average = '-'
     batting = player_data.get("batting") or "-"
     bowling = player_data.get("bowling") or "-"
     bowling_preference = player_data.get("bowling_preference") or "-"
+    fielding_dismissals = player_data.get("fielding_dismissals") or "-"
+    
     
     photo_path = find_player_photo(player_name)
     if photo_path:
@@ -697,8 +710,8 @@ def render_player_card(player_data: dict) -> None:
             </div>
             <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 15px;">
                 <div style="background: rgba(255,255,255,0.05); padding: 8px; border-radius: 6px; text-align: center;">
-                    <div style="font-size: 0.7rem; color: #9ca3af; font-weight: bold;">MATCHES</div>
-                    <div style="font-size: 1.2rem; font-weight: bold; color: #fff;">{matches}</div>
+                    <div style="font-size: 0.7rem; color: #9ca3af; font-weight: bold;">MATCHES (Innings)</div>
+                    <div style="font-size: 1.2rem; font-weight: bold; color: #fff;">{matches} <span style="font-size: 0.8rem; color: #38bdf8;">({innings})</span></div>
                 </div>
                 <div style="background: rgba(255,255,255,0.05); padding: 8px; border-radius: 6px; text-align: center;">
                     <div style="font-size: 0.7rem; color: #9ca3af; font-weight: bold;">RUNS (AVG/SR)</div>
@@ -721,6 +734,10 @@ def render_player_card(player_data: dict) -> None:
                 <div style="background: rgba(56,189,248,0.08); padding: 8px; border-radius: 6px;">
                     <div style="font-size: 0.7rem; color: #9ca3af; font-weight: bold;">BOWLING PREF</div>
                     <div style="font-size: 0.92rem; font-weight: 700; color: #f3f4f6;">{escape(str(bowling_preference))}</div>
+                </div>
+                <div style="background: rgba(56,189,248,0.08); padding: 8px; border-radius: 6px;">
+                    <div style="font-size: 0.7rem; color: #9ca3af; font-weight: bold;">FIELDING DISMISSALS</div>
+                    <div style="font-size: 0.92rem; font-weight: 700; color: #f3f4f6;">{escape(str(fielding_dismissals))}</div>
                 </div>
             </div>
         </div>

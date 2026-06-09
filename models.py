@@ -445,3 +445,8 @@ def is_captain_player(player_name):
             return True
 
     return False
+
+def any_captain_has_rtm_plus() -> bool:
+    """Checks if at least one team still has an RTM+ card available."""
+    res = rows("SELECT COUNT(*) as cnt FROM teams WHERE rtm_plus = 'AVAILABLE'")
+    return res[0]["cnt"] > 0 if res else False

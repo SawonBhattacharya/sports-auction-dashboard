@@ -638,42 +638,69 @@ def render_live_auction_console(
                 st.warning(f"{active_p['name']} is marked as UNSOLD.")
                 st.rerun()
                 
+        
         # ── 2. RTM+ Prompting Phase (Standard Bid Concluded) ──
         elif phase == 'RTM_PROMPT':
             st.markdown("#### RTM+ (Right To Match Plus) Trigger Pending")
             st.write(f"Highest bidder: **{bidder}** for **{format_inr(curr_bid)}**.")
-            st.write("Waiting to see if any opponent captain triggers their RTM+ card on this player...")
+            st.write("Waiting to see if any opponent captain verbally triggers their RTM+ card on this player...")
+            
+            st.divider()
+            
+            # Fetch eligible captains (Has RTM left AND is not the current highest bidder)
+            # Adjust the column name 'name' if your teams table uses 'team_name' instead
+            eligible_teams = models.rows(
+                "SELECT captain_name FROM teams WHERE rtm_used = False AND name != ?", 
+                (bidder,)
+            )
             
             rc1, rc2 = st.columns(2)
             
-            if rc1.button("No RTM+ Triggered - Declare SOLD", use_container_width=True):
-                # Finalize Sale
-                buyer_team = models.get_team(bidder)
-                models.update_player_status(active_p["id"], 'SOLD', sold_team=bidder, sold_price=curr_bid)
-                models.update_team_purse(bidder, buyer_team["purse_remaining"] - curr_bid)
-                
-                # Check surprise player bonus
-                bonus = rules_engine.check_surprise_bonus(bidder, active_p["id"], curr_bid)
-                if bonus > 0:
-                    models.update_team_purse(bidder, models.get_team(bidder)["purse_remaining"] + bonus)
-                    models.log_action("BONUS", player_id=active_p["id"], team_name=bidder, amount=bonus, note=f"Surprise Player Bonus: +{format_inr(bonus)} to {buyer_team['captain_name']}.")
+            with rc1:
+                st.markdown("##### Verbal RTM+ Activation")
+                if eligible_teams:
+                    challenger_names = [t["captain_name"] for t in eligible_teams]
+                    selected_challenger = st.selectbox("Select Captain triggering RTM+:", challenger_names)
                     
-                # Check prediction tax (penalize buying captain)
-                taxes = rules_engine.check_prediction_taxes(bidder, active_p["id"], curr_bid)
-                for tax in taxes:
-                    b_t = models.get_team(bidder)
-                    models.update_team_purse(bidder, b_t["purse_remaining"] - tax["tax_amount"])
-                    models.log_action("TAX", player_id=active_p["id"], team_name=bidder, amount=tax["tax_amount"], note=f"Prediction Tax penalty: -{format_inr(tax['tax_amount'])} triggered by predictor {tax['predictor_captain']}.")
+                    if st.button(f"Activate RTM+ for {selected_challenger}", type="primary", use_container_width=True):
+                        # 1. Instant Burn: Mark this captain's RTM+ card as used immediately
+                        models.execute("UPDATE teams SET rtm_used = True WHERE captain_name = ?", (selected_challenger,))
+                        
+                        # 2. Advance state to the Revision phase
+                        models.update_live_bid_state(
+                            player_id=active_p["id"],
+                            current_bid=curr_bid,
+                            current_bidder=bidder,
+                            phase='RTM_REVISE',
+                            rtm_captain=selected_challenger,
+                            bid_count=live_state["bid_count"]
+                        )
+                        
+                        models.log_action("RTM+ Activated", player_id=active_p["id"], note=f"Admin verbally activated RTM+ for {selected_challenger} against {bidder}.")
+                        st.success(f"RTM+ locked in for {selected_challenger}. Moving to Revision Phase.")
+                        st.rerun()
+                else:
+                    st.warning("No other captains have an RTM+ card available.")
+            
+            with rc2:
+                st.markdown("##### No Challenge")
+                # Add some vertical spacing to align the button with the dropdown on the left
+                st.write("") 
+                st.write("")
+                if st.button("No RTM+ Triggered - Declare SOLD", use_container_width=True):
+                    # Proceed to Finalize Sale
+                    buyer_team = models.get_team(bidder)
+                    models.update_player_status(active_p["id"], 'SOLD', curr_bid, buyer_team["id"])
                     
-                models.log_action("SOLD", player_id=active_p["id"], team_name=bidder, amount=curr_bid, note=f"{active_p['name']} sold to {bidder} for {format_inr(curr_bid)}.")
-                models.clear_live_bid_state()
-                st.success(f"{active_p['name']} sold successfully to {bidder} for {format_inr(curr_bid)}!")
-                st.rerun()
-                
-            if rc2.button("Force Cancel Active Bid State", use_container_width=True):
-                models.clear_live_bid_state()
-                st.warning("Bid state cleared manually.")
-                st.rerun()
+                    # Deduct money
+                    new_purse = float(buyer_team["purse_remaining"]) - curr_bid
+                    models.execute("UPDATE teams SET purse_remaining = ? WHERE id = ?", (new_purse, buyer_team["id"]))
+                    
+                    # Clear live bid state
+                    models.clear_live_bid_state()
+                    models.log_action("SOLD", player_id=active_p["id"], team_name=bidder, amount=curr_bid)
+                    st.success(f"Player SOLD to {bidder} for {format_inr(curr_bid)}!")
+                    st.rerun()
                 
         # ── 3. RTM+ Revision Phase ──
         elif phase == 'RTM_REVISE':

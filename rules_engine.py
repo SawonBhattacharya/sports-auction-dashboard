@@ -31,88 +31,73 @@ def calculate_max_bid(team_name: str, active_player_id: str, squad_target: int) 
     
     players_still_required = squad_target - current_squad_size
     
-    # Slots needed *after* the active player is purchased
+    # Slots needed *after* the active player is successfully purchased
     slots_after_purchase = players_still_required - 1
     
     if slots_after_purchase <= 0:
-        # No more players required or this is the last player, no reserve needed
+        # No more players required or this is the final slot, entire purse is liquid
         return current_purse
 
-    # Get all unauctioned (AVAILABLE) players excluding the active player
+    # Get all unauctioned (AVAILABLE) players excluding the active player on the block
     available_players = models.rows(
         "SELECT seeding FROM players WHERE status = 'AVAILABLE' AND id != ?",
         (active_player_id,)
     )
     
-    # Count seedings in available pool
+    # Compute available tier frequencies in the remaining pool
     seeding_counts = {"Impact": 0, "Rising": 0, "Premium": 0, "Icon": 0}
     for p in available_players:
         s = p["seeding"]
         if s in seeding_counts:
             seeding_counts[s] += 1
             
-    # Calculate reserve required by filling slots_after_purchase using cheapest tiers first
-    reserve_required = 0
-    slots_to_fill = slots_after_purchase
+    # Extract pool bounds
+    r_impact = seeding_counts["Impact"]
+    r_rising = seeding_counts["Rising"]
+    r_premium = seeding_counts["Premium"]
+    r_icon = seeding_counts["Icon"]
+
+    # --- Declarative Safety Engine Matrix ---
+    impact_used = min(slots_after_purchase, r_impact)
+    rising_used = min(max(slots_after_purchase - r_impact, 0), r_rising)
+    premium_used = min(max(slots_after_purchase - r_impact - r_rising, 0), r_premium)
+    icon_used = min(max(slots_after_purchase - r_impact - r_rising - r_premium, 0), r_icon)
     
-    # 1. Fill with Impact (₹20 Lakh)
-    impact_used = min(slots_to_fill, seeding_counts["Impact"])
-    reserve_required += impact_used * TIER_COSTS["Impact"]
-    slots_to_fill -= impact_used
+    # Base reserve required calculated from physical pool availability
+    reserve_required = (
+        (impact_used * TIER_COSTS["Impact"]) +
+        (rising_used * TIER_COSTS["Rising"]) +
+        (premium_used * TIER_COSTS["Premium"]) +
+        (icon_used * TIER_COSTS["Icon"])
+    )
     
-    # 2. Fill with Rising (₹50 Lakh)
-    if slots_to_fill > 0:
-        rising_used = min(slots_to_fill, seeding_counts["Rising"])
-        reserve_required += rising_used * TIER_COSTS["Rising"]
-        slots_to_fill -= rising_used
-        
-    # 3. Fill with Premium (₹1 Crore)
-    if slots_to_fill > 0:
-        premium_used = min(slots_to_fill, seeding_counts["Premium"])
-        reserve_required += premium_used * TIER_COSTS["Premium"]
-        slots_to_fill -= premium_used
-        
-    # 4. Fill with Icon (₹2 Crore)
-    if slots_to_fill > 0:
-        icon_used = min(slots_to_fill, seeding_counts["Icon"])
-        reserve_required += icon_used * TIER_COSTS["Icon"]
-        slots_to_fill -= icon_used
-        
-    # 5. If we still have slots to fill (e.g. pool is depleted), fill with the average price or Icon price
-    if slots_to_fill > 0:
-        reserve_required += slots_to_fill * TIER_COSTS["Impact"]
+    # Edge Case Fallback: If the global player pool is heavily depleted and cannot 
+    # physically satisfy slots_after_purchase, assign the lowest tier cost (Impact) 
+    # to the missing theoretical slots to maintain system stability.
+    total_slots_mapped = impact_used + rising_used + premium_used + icon_used
+    if total_slots_mapped < slots_after_purchase:
+        unallocated_slots = slots_after_purchase - total_slots_mapped
+        reserve_required += unallocated_slots * TIER_COSTS["Impact"]
         
     max_bid = current_purse - reserve_required
     return max(0, max_bid)
 
-def check_surprise_bonus(team_name: str,
-    player_id: str,
-    sold_price: int) -> int:
+def check_surprise_bonus(team_name: str, player_id: str, sold_price: int) -> int:
     """Checks if the sold player matches the buyer's surprise player.
     If true, returns the bonus credit amount: Max(10% of sold price, ₹25 Lakhs).
     Otherwise returns 0.
     """
-    from config import BONUS_FLOOR
-    import models
-
     team = models.get_team(team_name)
-
     if not team:
         return 0
 
     captain_name = team["captain_name"]
-
-    surprise_player = models.get_surprise_player(
-        captain_name
-    )
+    surprise_player = models.get_surprise_player(captain_name)
 
     if surprise_player != player_id:
         return 0
 
-    return max(
-        BONUS_FLOOR,
-        int(sold_price * 0.10)
-    )
+    return max(BONUS_FLOOR, int(sold_price * 0.10))
 
 def check_prediction_taxes(buyer_team_name: str, player_id: str, sold_price: int) -> list[dict]:
     """Checks if the sold player triggers any prediction tax penalty.
@@ -127,7 +112,6 @@ def check_prediction_taxes(buyer_team_name: str, player_id: str, sold_price: int
         
     buyer_captain = buyer_team["captain_name"]
     
-    # Find all predictions in pre_auction_bets where target_captain = buyer_captain AND target_player_id = player_id
     all_preds = models.rows(
         "SELECT captain_name FROM pre_auction_bets WHERE bet_type = 'PREDICTION' AND target_captain = ? AND target_player_id = ?",
         (buyer_captain, player_id)
@@ -157,12 +141,9 @@ def resolve_last_bid_joker(player_id: str) -> Optional[dict]:
     if not bids:
         return None
         
-    # Find the maximum bid amount
     max_bid = max(b["bid_amount"] for b in bids)
     highest_bids = [b for b in bids if b["bid_amount"] == max_bid]
     
-    # Get the active Last Bid Joker holder (who activated the joker for this player)
-    # The active state tells us who has the Last Bid Joker active
     state = models.get_live_bid_state()
     joker_holder = state["last_bid_joker_captain"] if state else None
     
@@ -173,19 +154,15 @@ def resolve_last_bid_joker(player_id: str) -> Optional[dict]:
         winner_bid = highest_bids[0]
         note = f"Silent bid revealed. {winner_bid['captain_name']} won with a bid of {winner_bid['bid_amount']}."
     else:
-        # Tie breaker! Check if one of the tied captains is the joker_holder
         tied_captains = [b["captain_name"] for b in highest_bids]
         if joker_holder and joker_holder in tied_captains:
             winner_bid = next(b for b in highest_bids if b["captain_name"] == joker_holder)
             note = f"Tie detected at {max_bid}. Joker owner {joker_holder} wins tie-breaker."
         else:
-            # If joker owner is not in the tie, default to the one who submitted earliest
-            # (or first in alphabetical order of captain name for simplicity)
             highest_bids_sorted = sorted(highest_bids, key=lambda x: x["submitted_at"])
             winner_bid = highest_bids_sorted[0]
             note = f"Tie detected at {max_bid}. Tie-broken by earliest submission: {winner_bid['captain_name']}."
             
-    # Find winning team
     team = models.get_team_by_captain(winner_bid["captain_name"])
     winning_team_name = team["name"] if team else None
     

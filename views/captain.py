@@ -348,9 +348,13 @@ def render_captain() -> None:
                             last_bid_joker_captain=captain_name,
                             bid_count=live_state["bid_count"]
                         )
+                        models.execute("UPDATE teams SET joker_last_bid = 'USED' WHERE captain_name = ?", (captain_name,))
                         models.log_action("JOKER", player_id=active_player["id"], team_name=tname, note=f"{captain_name} activated LAST BID Joker.")
                         st.success("Last Bid Joker activated! Standard bidding frozen.")
                         st.rerun()
+                        # 🟢 ADD THIS LINE TO BURN THE CARD IMMEDIATELY:
+    
+    
                 else:
                     jc1.info("Last Bid Joker is available but cannot be used in this phase.")
             elif has_joker_type == 'LAST_BID':
@@ -544,9 +548,13 @@ def render_captain() -> None:
                             current_bidder=None,
                             phase='BIDDING'
                         )
-                        models.log_action("JOKER", player_id=chosen_pid, team_name=tname, note=f"{captain_name} activated FORCE NOMINATION on {selected_nom}.")
+                        # 🟢 ADD THIS LINE TO BURN THE CARD IMMEDIATELY:
+                        models.execute("UPDATE teams SET joker_force_nom = 'USED' WHERE captain_name = ?", (captain_name,))
+                        
+                        models.log_action("JOKER", player_id=chosen_pid, team_name=tname, note=f"{captain_name} activated FORCE NOMINATION.")
                         st.success(f"{selected_nom} is now on the auction block!")
                         st.rerun()
+
             elif has_joker_type == 'FORCE_NOMINATION':
                 st.info("Force Nomination Joker: ❌ USED")
                 

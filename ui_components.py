@@ -686,7 +686,7 @@ def render_player_card(player_data: dict) -> None:
     batting = player_data.get("batting") or "-"
     bowling = player_data.get("bowling") or "-"
     bowling_preference = player_data.get("bowling_preference") or "-"
-    fielding_dismissals = player_data.get("fielding_dismissals") or "-"
+    fielding_dismissals = int(player_data.get("fielding_dismissals") or 0)
     
     
     photo_path = find_player_photo(player_name)

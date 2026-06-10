@@ -72,7 +72,8 @@ class _DBConn:
         if self._pg:
             # PostgreSQL does not support AUTOINCREMENT, convert to SERIAL
             sql = re.sub(r"INTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT", "SERIAL PRIMARY KEY", sql, flags=re.IGNORECASE)
-            self._cur.execute(sql)
+            with self._raw.cursor() as cur:
+                cur.execute(sql)
         else:
             self._raw.executescript(sql)
 
@@ -129,14 +130,21 @@ def init_db(force: bool = False) -> None:
             else:
                 exists = con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='players'").fetchone()
         except Exception:
-            pass
+            if getattr(con, '_pg', False):
+                try: con._raw.rollback()
+                except: pass
 
         if force:
             for table in ["audit_log", "auction_state", "live_bid_state", "silent_bids", "pre_auction_bets", "teams", "players"]:
                 try:
-                    con.execute(f"DROP TABLE IF EXISTS {table}")
+                    if getattr(con, '_pg', False):
+                        con.execute(f"DROP TABLE IF EXISTS {table} CASCADE")
+                    else:
+                        con.execute(f"DROP TABLE IF EXISTS {table}")
                 except Exception:
-                    pass
+                    if getattr(con, '_pg', False):
+                        try: con._raw.rollback()
+                        except: pass
             con.commit()
 
         if not exists or force:

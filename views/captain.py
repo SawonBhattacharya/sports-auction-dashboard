@@ -8,7 +8,23 @@ from db import connect, closing, get_state, set_state
 from ui_components import render_header, render_footer, inject_css, render_team_progress_grid, render_team_squad_rows, render_player_card, render_spin_wheel, render_sale_celebration,render_league_poster
 import rules_engine
 
+@st.fragment(run_every="2s")
+def captain_smart_watcher():
+    live_state = models.get_live_bid_state()
+    global_status = models.get_global_status()
+    with connect() as con:
+        spin_target = get_state(con, "wheel_target_player_id")
+        turn_idx = get_state(con, "marquee_draft_turn_index")
+        
+    current_hash = hash(str(live_state) + str(global_status) + str(spin_target) + str(turn_idx))
+    if st.session_state.get("captain_hash") != current_hash:
+        if "captain_hash" in st.session_state:
+            st.session_state["captain_hash"] = current_hash
+            st.rerun()
+        st.session_state["captain_hash"] = current_hash
+
 def render_captain() -> None:
+    captain_smart_watcher()
     render_league_poster()
     inject_css()
     render_sale_celebration()

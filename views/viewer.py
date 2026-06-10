@@ -4,7 +4,23 @@ import models
 from db import connect, closing, get_state
 from ui_components import render_header, render_footer, render_spin_wheel, inject_css, render_team_progress_grid, render_team_squad_rows, render_player_card, render_sale_celebration,render_league_poster
 
+@st.fragment(run_every="2s")
+def viewer_smart_watcher():
+    live_state = models.get_live_bid_state()
+    global_status = models.get_global_status()
+    with connect() as con:
+        spin_target = get_state(con, "wheel_target_player_id")
+    sold_count = len(models.rows("SELECT id FROM players WHERE status='SOLD'"))
+    
+    current_hash = hash(str(live_state) + str(global_status) + str(spin_target) + str(sold_count))
+    if st.session_state.get("viewer_hash") != current_hash:
+        if "viewer_hash" in st.session_state:
+            st.session_state["viewer_hash"] = current_hash
+            st.rerun()
+        st.session_state["viewer_hash"] = current_hash
+
 def render_viewer() -> None:
+    viewer_smart_watcher()
     render_league_poster()
     inject_css()
     render_sale_celebration()

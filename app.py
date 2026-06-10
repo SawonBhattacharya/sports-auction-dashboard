@@ -31,11 +31,30 @@ section[data-testid="stSidebar"] {
     color: white !important;
 }
 
-/* 2. THE FIX: Completely hide the collapse button so the sidebar stays permanently open/fixed */
-button[data-testid="stSidebarCollapseButton"],
-[data-testid="stSidebarCollapseButton"] {
-    display: none !important;
-    visibility: hidden !important;
+/* 2. Make the collapse/expand button visible and themed for dark mode */
+button[data-testid="stBaseButton-headerNoPadding"],
+[data-testid="stSidebarCollapseButton"],
+[data-testid="collapsedControl"] {
+    visibility: visible !important;
+    opacity: 1 !important;
+    color: #e5e7eb !important;
+    background-color: rgba(31, 41, 55, 0.95) !important;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    border-radius: 8px !important;
+    z-index: 999999 !important;
+}
+
+button[data-testid="stBaseButton-headerNoPadding"]:hover,
+[data-testid="stSidebarCollapseButton"]:hover {
+    background-color: rgba(34, 197, 94, 0.2) !important;
+    border-color: #22c55e !important;
+}
+
+/* Force the material icon inside the button to be white */
+button[data-testid="stBaseButton-headerNoPadding"] span[data-testid="stIconMaterial"],
+[data-testid="stIconMaterial"] {
+    color: white !important;
+    opacity: 1 !important;
 }
 
 /* Readjust main content padding slightly to blend perfectly with a permanent sidebar */

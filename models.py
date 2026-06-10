@@ -273,51 +273,14 @@ def save_surprise_player(
     player_id: str
 ) -> None:
 
-    existing = one(
-        """
-        SELECT 1
-        FROM pre_auction_bets
-        WHERE captain_name = ?
-        AND bet_type = 'SURPRISE'
-        """,
-        (captain_name,)
-    )
-
-    if existing:
-        execute(
-            """
-            DELETE FROM pre_auction_bets
-            WHERE captain_name = ?
-            AND bet_type = 'SURPRISE'
-            """,
-            (captain_name,)
-        )
-
     now = utc_now()
-
-    execute(
-        """
-        INSERT INTO pre_auction_bets
-        (
-            captain_name,
-            bet_type,
-            target_player_id,
-            created_at
+    with connect() as con:
+        con.execute("DELETE FROM pre_auction_bets WHERE captain_name = ? AND bet_type = 'SURPRISE'", (captain_name,))
+        con.execute(
+            "INSERT INTO pre_auction_bets (captain_name, bet_type, target_player_id, created_at) VALUES (?, 'SURPRISE', ?, ?)",
+            (captain_name, player_id, now)
         )
-        VALUES
-        (
-            ?,
-            'SURPRISE',
-            ?,
-            ?
-        )
-        """,
-        (
-            captain_name,
-            player_id,
-            now
-        )
-    )
+        con.commit()
 
 def get_surprise_player(captain_name: str) -> Optional[str]:
     row = one("SELECT target_player_id FROM pre_auction_bets WHERE captain_name = ? AND bet_type = 'SURPRISE'", (captain_name,))
@@ -325,16 +288,13 @@ def get_surprise_player(captain_name: str) -> Optional[str]:
 
 def save_prediction(captain_name: str, target_captain: str, player_id: str) -> None:
     now = utc_now()
-    # Unique constraint check: each captain has unique prediction on target_captain
-    execute(
-        "DELETE FROM pre_auction_bets WHERE captain_name = ? AND bet_type = 'PREDICTION' AND target_captain = ?",
-        (captain_name, target_captain)
-    )
-    execute(
-        "INSERT INTO pre_auction_bets (captain_name, bet_type, target_captain, target_player_id, created_at) "
-        "VALUES (?, 'PREDICTION', ?, ?, ?)",
-        (captain_name, target_captain, player_id, now)
-    )
+    with connect() as con:
+        con.execute("DELETE FROM pre_auction_bets WHERE captain_name = ? AND bet_type = 'PREDICTION' AND target_captain = ?", (captain_name, target_captain))
+        con.execute(
+            "INSERT INTO pre_auction_bets (captain_name, bet_type, target_captain, target_player_id, created_at) VALUES (?, 'PREDICTION', ?, ?, ?)",
+            (captain_name, target_captain, player_id, now)
+        )
+        con.commit()
 
 def get_predictions(captain_name: str) -> list[dict]:
     return rows(

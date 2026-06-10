@@ -97,12 +97,11 @@ def check_surprise_bonus(team_name: str, player_id: str, base_price:int, sold_pr
 
     if surprise_player != player_id:
         return 0
-    # Base defensive adjustment: at least 25L or 10% of base_price
-    if sold_price<BONUS_FLOOR:
-        return min(base_price,BONUS_FLOOR)
-    else:
-        calculated_bonus = max(0.10 * sold_price, BONUS_FLOOR)
-    return calculated_bonus
+    # Bonus is MIN(Sold Price - Base Price, Base Price)
+    amount_above_base = sold_price - base_price
+    if amount_above_base <= 0:
+        return 0
+    return int(min(amount_above_base, base_price))
 
 def check_prediction_taxes(buyer_team_name: str, player_id: str, squad_target:int,base_price:int, sold_price: int) -> list[dict]:
     """Checks if the sold player triggers any prediction tax penalty.
@@ -123,15 +122,16 @@ def check_prediction_taxes(buyer_team_name: str, player_id: str, squad_target:in
     )
     
     triggered_predictions = []
-    # Inside penalty handler logic
-    if sold_price<TAX_FLOOR:
-        tax_penalty = min(base_price,TAX_FLOOR)
+    # Penalty is MIN(Sold Price - Base Price, Base Price)
+    amount_above_base = sold_price - base_price
+    if amount_above_base <= 0:
+        tax_penalty = 0
     else:
-        tax_penalty = max(int(0.10 * sold_price), TAX_FLOOR)
+        tax_penalty = int(min(amount_above_base, base_price))
     
     # Roster safety check before checking out
-    max_bid_available = calculate_max_bid(buyer_team_name, player_id, squad_target)
-    if (sold_price + tax_penalty) > max_bid_available:
+    remaining_after_purchase = buyer_team["purse_remaining"] - sold_price
+    if tax_penalty > remaining_after_purchase:
         return []
     else:
         for pred in all_preds:

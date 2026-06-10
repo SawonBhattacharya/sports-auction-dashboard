@@ -12,18 +12,22 @@ import rules_engine
 from db import connect, closing, get_state, set_state, init_db
 import ui_components
 
-def render_admin():
-    init_db()
-    ui_components.inject_css()
 
-    ui_components.render_league_poster()
+@st.fragment(run_every="2s")
+def admin_smart_watcher():
+    live_state = models.get_live_bid_state()
+    bets_count = len(models.rows("SELECT id FROM pre_auction_bets"))
+    silent_bids_count = len(models.rows("SELECT player_id, captain_name FROM silent_bids"))
+    
+    current_hash = hash(str(live_state) + str(bets_count) + str(silent_bids_count))
+    if st.session_state.get("admin_hash") != current_hash:
+        if "admin_hash" in st.session_state:
+            st.session_state["admin_hash"] = current_hash
+            st.rerun()
+        st.session_state["admin_hash"] = current_hash
 
-    st.html(
-        """
-        ...
-        """
-    )
 def render_admin() -> None:
+    admin_smart_watcher()
     # Initialize DB tables on first access
     init_db()
     ui_components.inject_css()
@@ -59,16 +63,12 @@ def render_admin() -> None:
     if st.button("Refresh Data", use_container_width=True):
         st.rerun()
 
-    tab_manage, tab_live, tab_surprise, tab_audit, tab_wheel, tab_settings = st.tabs(
-        [
-            "Manage Teams",
-            "Live Auction Control",
-            "Surprise Player",
-            "Preduct Audit Ledger",
-            "Main Wheel Draw",
-            "Settings & Reset",
-        ]
-    )
+    if global_status == 'PRE_AUCTION':
+        tab_names = ["Manage Teams", "Live Auction Control", "Surprise Player", "Predict Audit Ledger", "Main Wheel Draw", "Settings & Reset"]
+        tab_manage, tab_live, tab_surprise, tab_audit, tab_wheel, tab_settings = st.tabs(tab_names)
+    else:
+        tab_names = ["Live Auction Control", "Main Wheel Draw", "Manage Teams", "Surprise Player", "Predict Audit Ledger", "Settings & Reset"]
+        tab_live, tab_wheel, tab_manage, tab_surprise, tab_audit, tab_settings = st.tabs(tab_names)
 
     with tab_manage:
         render_manage_teams_section()
@@ -446,6 +446,7 @@ def render_pre_auction_wizard() -> None:
         and jokers_assigned
         and completed == 'TRUE'
         and surprise_count == len(models.get_all_teams())
+        and pred_count == 8
     )
 
     
@@ -637,9 +638,20 @@ def render_live_auction_console(
                 
                 # Check purse safety max bid
                 max_bid = rules_engine.calculate_max_bid(tname, active_p["id"], t["max_squad_size"])
-                is_disabled = next_bid > max_bid
                 
-                b_cols[idx].write(f"**{tname}** ({tcap})  \nMax Bid: {format_inr(max_bid)}")
+                # Hidden Penalty Logic
+                is_taxed = models.rows("SELECT 1 FROM pre_auction_bets WHERE bet_type = 'PREDICTION' AND target_captain = ? AND target_player_id = ?", (tcap, active_p["id"]))
+                adjusted_max_bid = max_bid - active_p["base_price"] if is_taxed else max_bid
+                
+                is_disabled = next_bid > adjusted_max_bid
+                
+                if is_disabled and is_taxed and next_bid <= max_bid:
+                    # Hit hidden ceiling
+                    b_cols[idx].error(f"🚨 Penalty Alert!\nAdjusted Max Bid: {format_inr(adjusted_max_bid)}")
+                else:
+                    # Show normal max bid to keep it secret, or if no penalty exists
+                    b_cols[idx].write(f"**{tname}** ({tcap})  \nMax Bid: {format_inr(max_bid)}")
+                    
                 if b_cols[idx].button(f"Bid {format_inr(next_bid)}", key=f"bid_btn_{tname}", disabled=is_disabled):
                     models.update_live_bid_state(
                         player_id=active_p["id"],
@@ -662,10 +674,15 @@ def render_live_auction_console(
             
             c_team_d = models.get_team(c_team)
             c_max = rules_engine.calculate_max_bid(c_team, active_p["id"], c_team_d["max_squad_size"])
+            is_taxed_c = models.rows("SELECT 1 FROM pre_auction_bets WHERE bet_type = 'PREDICTION' AND target_captain = ? AND target_player_id = ?", (c_team_d["captain_name"], active_p["id"]))
+            adjusted_c_max = c_max - active_p["base_price"] if is_taxed_c else c_max
             
             if st.button("Submit Custom Bid", use_container_width=True):
-                if c_amount > c_max:
-                    st.error(f"❌ Custom bid exceeds maximum allowed bid ({format_inr(c_max)}) for {c_team}!")
+                if c_amount > adjusted_c_max:
+                    if is_taxed_c and c_amount <= c_max:
+                        st.error(f"❌ Secret Penalty Revealed! {c_team} has a pending tax. Their adjusted max bid is {format_inr(adjusted_c_max)}.")
+                    else:
+                        st.error(f"❌ Custom bid exceeds maximum allowed bid ({format_inr(c_max)}) for {c_team}!")
                 elif c_amount < (curr_bid + rules_engine.get_min_increment(curr_bid) if curr_bid > 0 else active_p["base_price"]):
                     st.error("❌ Custom bid amount is too low!")
                 else:
@@ -754,17 +771,27 @@ def render_live_auction_console(
                 st.write("") 
                 st.write("")
                 if st.button("No RTM+ Triggered - Declare SOLD", use_container_width=True):
-                    # Proceed to Finalize Sale
                     buyer_team = models.get_team(bidder)
-                    models.update_player_status(active_p["id"], 'SOLD', curr_bid, buyer_team["id"])
+                    models.update_player_status(active_p["id"], 'SOLD', sold_team=bidder, sold_price=curr_bid)
+                    models.update_team_purse(bidder, buyer_team["purse_remaining"] - curr_bid)
                     
-                    # Deduct money
-                    new_purse = float(buyer_team["purse_remaining"]) - curr_bid
-                    models.execute("UPDATE teams SET purse_remaining = ? WHERE id = ?", (new_purse, buyer_team["id"]))
+                    bonus = rules_engine.check_surprise_bonus(bidder, active_p["id"], active_p["base_price"], curr_bid)
+                    if bonus > 0:
+                        models.update_team_purse(bidder, models.get_team(bidder)["purse_remaining"] + bonus)
+                        models.log_action("BONUS", player_id=active_p["id"], team_name=bidder, amount=bonus, note=f"Surprise Player Bonus: +{format_inr(bonus)}")
+                        st.toast(f"🎉 Surprise Player Applied Successfully!", icon="🎁")
                     
-                    # Clear live bid state
+                    current_teams = models.get_all_teams()
+                    curr_limit = current_teams[0]["max_squad_size"] if current_teams else 10
+                    taxes = rules_engine.check_prediction_taxes(bidder, active_p["id"], curr_limit, active_p["base_price"], curr_bid)
+                    for tax in taxes:
+                        b_t = models.get_team(bidder)
+                        models.update_team_purse(bidder, b_t["purse_remaining"] - tax["tax_amount"])
+                        models.log_action("TAX", player_id=active_p["id"], team_name=bidder, amount=tax["tax_amount"], note=f"Prediction Tax penalty: -{format_inr(tax['tax_amount'])} triggered by predictor {tax['predictor_captain']}.")
+                        st.toast(f"⚠️ Roster Penalty Levied on Team!", icon="🛑")
+                        
                     models.clear_live_bid_state()
-                    models.log_action("SOLD", player_id=active_p["id"], team_name=bidder, amount=curr_bid)
+                    models.log_action("SOLD", player_id=active_p["id"], team_name=bidder, amount=curr_bid, note=f"{active_p['name']} sold to {bidder} for {format_inr(curr_bid)}.")
                     st.success(f"Player SOLD to {bidder} for {format_inr(curr_bid)}!")
                     st.rerun()
                 
@@ -822,19 +849,16 @@ def render_live_auction_console(
                 current_teams = models.get_all_teams()
                 curr_limit = current_teams[0]["max_squad_size"] if current_teams else 10    
                 taxes = rules_engine.check_prediction_taxes(c_team["name"], active_p["id"],curr_limit,active_p["base_price"], rev_price)
-                if len(taxes)>0:
-                    for tax in taxes:
-                        b_t = models.get_team(c_team["name"])
-                        models.update_team_purse(c_team["name"], b_t["purse_remaining"] - tax["tax_amount"])
-                        models.log_action("TAX", player_id=active_p["id"], team_name=c_team["name"], amount=tax["tax_amount"], note=f"Prediction Tax penalty: -{format_inr(tax['tax_amount'])} triggered by predictor {tax['predictor_captain']}.")
-                        
-                    models.log_action("SOLD", player_id=active_p["id"], team_name=c_team["name"], amount=rev_price, note=f"{active_p['name']} sold to {c_team['name']} (Match Override) for {format_inr(rev_price)}.")
-                    models.clear_live_bid_state()
-                    st.success("Successfully completed sale to Challenger.")
-                    st.rerun()
-                else:
-                    st.error(f"Tax penalty of {format_inr(tax['tax_amount'])} for {tax['predictor_captain']} prediction exceeds team's remaining purse!")
-                    st.rerun()
+                for tax in taxes:
+                    b_t = models.get_team(c_team["name"])
+                    models.update_team_purse(c_team["name"], b_t["purse_remaining"] - tax["tax_amount"])
+                    models.log_action("TAX", player_id=active_p["id"], team_name=c_team["name"], amount=tax["tax_amount"], note=f"Prediction Tax penalty: -{format_inr(tax['tax_amount'])} triggered by predictor {tax['predictor_captain']}.")
+                    st.toast(f"⚠️ Roster Penalty Levied on Team!", icon="🛑")
+                    
+                models.log_action("SOLD", player_id=active_p["id"], team_name=c_team["name"], amount=rev_price, note=f"{active_p['name']} sold to {c_team['name']} (Match Override) for {format_inr(rev_price)}.")
+                models.clear_live_bid_state()
+                st.success("Successfully completed sale to Challenger.")
+                st.rerun()
                 
             if dc2.button("Force Decline (SOLD to Highest Bidder)", use_container_width=True):
                 rev_price = live_state["revised_bid"]
@@ -842,7 +866,7 @@ def render_live_auction_console(
                 models.update_team_purse(bidder, models.get_team(bidder)["purse_remaining"] - rev_price)
                 
                 # Check surprise/taxes
-                bonus = rules_engine.check_surprise_bonus(bidder, active_p["id"], rev_price)
+                bonus = rules_engine.check_surprise_bonus(bidder, active_p["id"], active_p["base_price"], rev_price)
                 if bonus > 0:
                     models.update_team_purse(bidder, models.get_team(bidder)["purse_remaining"] + bonus)
                     models.log_action("BONUS", player_id=active_p["id"], team_name=bidder, amount=bonus, note=f"Surprise Player Bonus: +{format_inr(bonus)}")
@@ -850,6 +874,8 @@ def render_live_auction_console(
                     st.toast(f"🎉 Surprise Player Applied Successfully!", icon="🎁")
 
                     
+                current_teams = models.get_all_teams()
+                curr_limit = current_teams[0]["max_squad_size"] if current_teams else 10
                 taxes = rules_engine.check_prediction_taxes(bidder, active_p["id"],curr_limit,active_p["base_price"], rev_price)
                 for tax in taxes:
                     b_t = models.get_team(bidder)
@@ -904,11 +930,13 @@ def render_live_auction_console(
                         models.update_team_purse(w_team, team_d["purse_remaining"] - w_price)
                         
                         # Apply surprise/prediction taxes
-                        bonus = rules_engine.check_surprise_bonus(w_team, active_p["id"], w_price)
+                        bonus = rules_engine.check_surprise_bonus(w_team, active_p["id"], active_p["base_price"], w_price)
                         if bonus > 0:
                             models.update_team_purse(w_team, models.get_team(w_team)["purse_remaining"] + bonus)
                             models.log_action("BONUS", player_id=active_p["id"], team_name=w_team, amount=bonus, note=f"Surprise Player Bonus: +{format_inr(bonus)}")
                             
+                        current_teams = models.get_all_teams()
+                        curr_limit = current_teams[0]["max_squad_size"] if current_teams else 10
                         taxes = rules_engine.check_prediction_taxes(w_team, active_p["id"],curr_limit,active_p["base_price"], w_price)
                         for tax in taxes:
                             b_t = models.get_team(w_team)
@@ -987,6 +1015,14 @@ def render_admin_reset_panel() -> None:
             models.execute("UPDATE players SET status = 'AVAILABLE', sold_team = NULL, sold_price = NULL WHERE id = ?", (p_id,))
             models.execute("UPDATE teams SET purse_remaining = purse_remaining + ? WHERE name = ?", (refund_amt, t_name))
             models.execute("DELETE FROM audit_log WHERE id = ?", (last_sale["id"],))
+
+            related_entries = models.rows("SELECT * FROM audit_log WHERE player_id = ? AND action IN ('BONUS', 'TAX') ORDER BY id DESC", (p_id,))
+            for entry in related_entries:
+                if entry["action"] == "BONUS":
+                    models.execute("UPDATE teams SET purse_remaining = purse_remaining - ? WHERE name = ?", (entry["amount"], entry["team_name"]))
+                elif entry["action"] == "TAX":
+                    models.execute("UPDATE teams SET purse_remaining = purse_remaining + ? WHERE name = ?", (entry["amount"], entry["team_name"]))
+                models.execute("DELETE FROM audit_log WHERE id = ?", (entry["id"],))
 
             st.success(f"Successfully reverted sale of player! Refunded {refund_amt} back to {t_name}.")
             st.rerun()

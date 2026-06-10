@@ -341,6 +341,21 @@ def inject_css() -> None:
         15% { opacity: 1; }
         100% { transform: translateY(150px) rotate(220deg); opacity: 0; }
     }
+    @media (max-width: 720px) {
+        .glass-card {
+            padding: 12px;
+        }
+        .player-card-outer {
+            flex-direction: column !important;
+        }
+        .player-card-photo {
+            width: 100% !important;
+            flex-direction: row !important;
+        }
+        .player-stats-grid {
+            grid-template-columns: repeat(2, 1fr) !important;
+        }
+    }
     </style>
     """
     st.html(css)
@@ -696,8 +711,8 @@ def render_player_card(player_data: dict) -> None:
         img_src = "https://ui-avatars.com/api/?name=" + player_name.replace(" ", "+") + "&background=1f2937&color=38bdf8&size=200"
 
     html = f"""
-    <div class="glass-card" style="display: flex; gap: 20px; align-items: stretch; margin-bottom: 20px;">
-        <div style="flex-shrink: 0; width: 140px; display: flex; flex-direction: column; justify-content: center; align-items: center; background: rgba(0,0,0,0.2); border-radius: 8px; padding: 10px;">
+    <div class="glass-card player-card-outer" style="display: flex; gap: 20px; align-items: stretch; margin-bottom: 20px;">
+        <div class="player-card-photo" style="flex-shrink: 0; width: 140px; display: flex; flex-direction: column; justify-content: center; align-items: center; background: rgba(0,0,0,0.2); border-radius: 8px; padding: 10px;">
             <img src="{escape(img_src or '', quote=True)}" style="width: 110px; height: 110px; border-radius: 50%; object-fit: cover; border: 3px solid #38bdf8; box-shadow: 0 0 15px rgba(56, 189, 248, 0.3);">
             <div style="margin-top: 10px; text-align: center;">
                 <span class="tag">{escape(str(category))}</span>
@@ -708,7 +723,7 @@ def render_player_card(player_data: dict) -> None:
                 <h2 style="margin: 0; font-size: 1.8rem; color: #f3f4f6; letter-spacing: 0.5px;">{escape(str(player_name))}</h2>
                 <div style="margin-top: 5px; font-size: 1.1rem; color: #22c55e; font-weight: bold;">Base Price: {base_price_fmt}</div>
             </div>
-            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 15px;">
+            <div class="player-stats-grid" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 15px;">
                 <div style="background: rgba(255,255,255,0.05); padding: 8px; border-radius: 6px; text-align: center;">
                     <div style="font-size: 0.7rem; color: #9ca3af; font-weight: bold;">MATCHES (Innings)</div>
                     <div style="font-size: 1.2rem; font-weight: bold; color: #fff;">{matches} <span style="font-size: 0.8rem; color: #38bdf8;">({innings})</span></div>
@@ -722,7 +737,7 @@ def render_player_card(player_data: dict) -> None:
                     <div style="font-size: 1.1rem; font-weight: bold; color: #fff;">{wickets} <span style="font-size: 0.8rem; color: #38bdf8;">({economy})</span></div>
                 </div>
             </div>
-            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px;">
+            <div class="player-stats-grid" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px;">
                 <div style="background: rgba(56,189,248,0.08); padding: 8px; border-radius: 6px;">
                     <div style="font-size: 0.7rem; color: #9ca3af; font-weight: bold;">BATTING</div>
                     <div style="font-size: 0.92rem; font-weight: 700; color: #f3f4f6;">{escape(str(batting))}</div>

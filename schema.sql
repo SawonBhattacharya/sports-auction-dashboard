@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS teams (
 
 -- 3. Pre-Auction Secret Selections
 CREATE TABLE IF NOT EXISTS pre_auction_bets (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT, -- SQLite auto_increment. Postgres uses SERIAL (handled in app)
+    id              SERIAL PRIMARY KEY, -- SQLite auto_increment. Postgres uses SERIAL (handled in app)
     captain_name    TEXT NOT NULL,
     bet_type        TEXT NOT NULL,                   -- 'SURPRISE' or 'PREDICTION'
     target_captain  TEXT,                            -- For predictions: who is buying
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS pre_auction_bets (
 
 -- 4. Silent Bids for Last Bid Joker
 CREATE TABLE IF NOT EXISTS silent_bids (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    id              SERIAL PRIMARY KEY,
     player_id       TEXT NOT NULL,
     captain_name    TEXT NOT NULL,
     bid_amount      BIGINT NOT NULL,
@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS auction_state (
 
 -- 7. Audit Log Table
 CREATE TABLE IF NOT EXISTS audit_log (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id          SERIAL PRIMARY KEY,
     action      TEXT NOT NULL,                       -- BID, SOLD, UNSOLD, JOKER, SYNC, etc.
     player_id   TEXT,
     team_name   TEXT,

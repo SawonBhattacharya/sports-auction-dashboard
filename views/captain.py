@@ -63,7 +63,7 @@ def render_captain() -> None:
         
         # 2a. Surprise Player Selection
         st.markdown("### 🎁 Surprise Player Selection")
-        st.write("Select one player secretly. If you buy him, you get a bonus of 10% of his purchase price or ₹25 Lakhs (whichever is higher).")
+        st.write("Select one player secretly. If you buy him, you get a bonus equal to the amount paid above his base price (capped at a maximum of his base price).")
         
         prediction_players = models.rows("""
             SELECT id,name,seeding,base_price
@@ -149,7 +149,7 @@ def render_captain() -> None:
         # 2b. Prediction Tax Entries
         st.markdown("### 🔮 Prediction Tax Entries")
         st.write("Predict which rival captain will buy which player. (Submit up to 2 secret predictions).")
-        st.caption("If they buy that player, they will be penalized 10% of the purchase price or ₹25 Lakhs.")
+        st.caption("If they buy that player, they will be penalized an amount equal to what they paid above his base price (capped at his base price).")
         
         rivals = [c for c in CAPTAINS.keys() if c != captain_name]
         

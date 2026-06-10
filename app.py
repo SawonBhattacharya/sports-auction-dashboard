@@ -75,8 +75,12 @@ def run_live_captain_screen() -> None:
 
 def main() -> None:
     role = st.query_params.get("role")
+    is_authenticated = st.session_state.get("logged_in", False)
     
-    if not role:
+    # Block access if they haven't authenticated via the login form in this session
+    if not role or not is_authenticated:
+        if role and not is_authenticated:
+            st.query_params.clear()
         render_login()
         return
         

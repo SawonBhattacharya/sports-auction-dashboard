@@ -12,6 +12,7 @@ from config import PASSCODES
 try:
     import psycopg2
     from psycopg2.extras import RealDictCursor
+    from psycopg2.pool import ThreadedConnectionPool
     _HAS_PG = True
 except ImportError:
     _HAS_PG = False
@@ -34,9 +35,10 @@ def _use_pg() -> bool:
 
 class _DBConn:
     """Thin wrapper shim for SQLite/PostgreSQL compatibility."""
-    def __init__(self, raw_connection: Any, *, is_pg: bool):
+    def __init__(self, raw_connection: Any, *, is_pg: bool, is_pooled: bool = False):
         self._raw = raw_connection
         self._pg = is_pg
+        self._is_pooled = is_pooled
         self._cur = raw_connection.cursor() if is_pg else None
 
     @staticmethod
@@ -86,10 +88,20 @@ class _DBConn:
                 self._cur.close()
             except Exception:
                 pass
-        try:
-            self._raw.close()
-        except Exception:
-            pass
+                
+        if self._is_pooled and self._pg:
+            pool = get_pg_pool()
+            if pool:
+                try:
+                    self._raw.rollback() # Clear any pending tx state
+                    pool.putconn(self._raw)
+                except Exception:
+                    pass
+        else:
+            try:
+                self._raw.close()
+            except Exception:
+                pass
 
     def __enter__(self) -> "_DBConn":
         return self
@@ -98,17 +110,26 @@ class _DBConn:
         self.close()
         return False
 
+@st.cache_resource(show_spinner=False)
+def get_pg_pool():
+    url = _get_db_url() or ""
+    if "[YOUR-PASSWORD]" in url or "[YOUR_PASSWORD]" in url or "<password>" in url:
+        st.error("❌ Database Connection URL placeholder not replaced.")
+        st.stop()
+    try:
+        return ThreadedConnectionPool(1, 15, url, cursor_factory=RealDictCursor)
+    except Exception as e:
+        st.error(f"❌ Cloud database connection failed: {e}")
+        st.stop()
+
 def connect() -> _DBConn:
     """Return a _DBConn wrapping either psycopg2 or sqlite3."""
     if _use_pg():
-        url = _get_db_url() or ""
-        if "[YOUR-PASSWORD]" in url or "[YOUR_PASSWORD]" in url or "<password>" in url:
-            st.error("❌ Database Connection URL placeholder not replaced.")
-            st.stop()
+        pool = get_pg_pool()
         try:
-            raw = psycopg2.connect(url, cursor_factory=RealDictCursor)
+            raw = pool.getconn()
             raw.autocommit = True
-            return _DBConn(raw, is_pg=True)
+            return _DBConn(raw, is_pg=True, is_pooled=True)
         except Exception as e:
             st.error(f"❌ Cloud database connection failed: {e}")
             st.stop()
@@ -216,6 +237,29 @@ def execute(query: str, params: tuple[Any, ...] = ()) -> None:
     with closing(connect()) as con:
         con.execute(query, params)
         con.commit()
+
+def execute_transaction(queries_with_params: list[tuple[str, tuple[Any, ...]]]) -> None:
+    """Executes multiple queries in a single connection transaction."""
+    with closing(connect()) as con:
+        if con._pg:
+            con._raw.autocommit = False
+            try:
+                for sql, params in queries_with_params:
+                    con.execute(sql, params)
+                con._raw.commit()
+            except Exception as e:
+                con._raw.rollback()
+                raise e
+            finally:
+                con._raw.autocommit = True
+        else:
+            try:
+                for sql, params in queries_with_params:
+                    con.execute(sql, params)
+                con.commit()
+            except Exception as e:
+                con._raw.rollback()
+                raise e
 
 def clean_text(value: Any) -> str:
     if value is None or str(value).lower() == "nan":

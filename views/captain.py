@@ -427,62 +427,70 @@ def render_captain() -> None:
                 
                 rc1, rc2 = st.columns(2)
                 if rc1.button("🤝 MATCH (Pay and acquire player)", use_container_width=True):
-                    if rev_bid > team["purse_remaining"]:
-                        st.error("❌ You don't have enough purse remaining to match this bid!")
-                    else:
-                        # Process Match: B gets the player at rev_bid
-                        models.update_player_status(active_player["id"], 'SOLD', sold_team=tname, sold_price=rev_bid)
-                        models.update_team_purse(tname, team["purse_remaining"] - rev_bid)
-                        
-                        # Apply Surprise player check
-                        # Bug 1 Fix: Pass base_price
-                        bonus = rules_engine.check_surprise_bonus(tname, active_player["id"], active_player["base_price"], rev_bid)
-                        if bonus > 0:
-                            models.update_team_purse(tname, models.get_team(tname)["purse_remaining"] + bonus)
-                            models.log_action("BONUS", player_id=active_player["id"], team_name=tname, amount=bonus, note=f"Surprise Player Bonus activated: +{format_inr(bonus)}")
+                    with st.spinner("Processing Sale... Do not refresh."):
+                        if models.get_player(active_player["id"])["status"] == 'SOLD':
+                            st.error("Player already sold! Action aborted.")
+                            st.rerun()
+                        if rev_bid > team["purse_remaining"]:
+                            st.error("❌ You don't have enough purse remaining to match this bid!")
+                        else:
+                            # Process Match: B gets the player at rev_bid
+                            models.update_player_status(active_player["id"], 'SOLD', sold_team=tname, sold_price=rev_bid)
+                            models.update_team_purse(tname, team["purse_remaining"] - rev_bid)
                             
-                        # Apply Prediction Tax check (Buying captain penalized)
-                        # Bug 7 fix: use the specific team's max squad size
-                        curr_limit = team["max_squad_size"]
-                        taxes = rules_engine.check_prediction_taxes(tname, active_player["id"],curr_limit,active_player["base_price"], rev_bid)
-                        for tax in taxes:
-                            buyer_t = models.get_team(tname)
-                            models.update_team_purse(tname, buyer_t["purse_remaining"] - tax["tax_amount"])
-                            models.log_action("TAX", player_id=active_player["id"], team_name=tname, amount=tax["tax_amount"], note=f"Prediction Tax penalty: -{format_inr(tax['tax_amount'])} triggered by predictor {tax['predictor_captain']}.")
-                            
-                        models.log_action("SOLD", player_id=active_player["id"], team_name=tname, amount=rev_bid, note=f"{active_player['name']} sold to {tname} (RTM MATCH) for {format_inr(rev_bid)}.")
-                        models.clear_live_bid_state()
-                        st.success(f"Acquired {active_player['name']} for {format_inr(rev_bid)}!")
-                        st.rerun()
+                            # Apply Surprise player check
+                            # Bug 1 Fix: Pass base_price
+                            bonus = rules_engine.check_surprise_bonus(tname, active_player["id"], active_player["base_price"], rev_bid)
+                            if bonus > 0:
+                                models.update_team_purse(tname, models.get_team(tname)["purse_remaining"] + bonus)
+                                models.log_action("BONUS", player_id=active_player["id"], team_name=tname, amount=bonus, note=f"Surprise Player Bonus activated: +{format_inr(bonus)}")
+                                
+                            # Apply Prediction Tax check (Buying captain penalized)
+                            # Bug 7 fix: use the specific team's max squad size
+                            curr_limit = team["max_squad_size"]
+                            taxes = rules_engine.check_prediction_taxes(tname, active_player["id"],curr_limit,active_player["base_price"], rev_bid)
+                            for tax in taxes:
+                                buyer_t = models.get_team(tname)
+                                models.update_team_purse(tname, buyer_t["purse_remaining"] - tax["tax_amount"])
+                                models.log_action("TAX", player_id=active_player["id"], team_name=tname, amount=tax["tax_amount"], note=f"Prediction Tax penalty: -{format_inr(tax['tax_amount'])} triggered by predictor {tax['predictor_captain']}.")
+                                
+                            models.log_action("SOLD", player_id=active_player["id"], team_name=tname, amount=rev_bid, note=f"{active_player['name']} sold to {tname} (RTM MATCH) for {format_inr(rev_bid)}.")
+                            models.clear_live_bid_state()
+                            st.success(f"Acquired {active_player['name']} for {format_inr(rev_bid)}!")
+                            st.rerun()
                         
                 if rc2.button("❌ DECLINE (Let highest bidder buy player)", use_container_width=True):
-                    # Process Decline: A gets the player at rev_bid
-                    high_bidder_tname = live_state["current_bidder"]
-                    high_bidder_team = models.get_team(high_bidder_tname)
-                    
-                    models.update_player_status(active_player["id"], 'SOLD', sold_team=high_bidder_tname, sold_price=rev_bid)
-                    models.update_team_purse(high_bidder_tname, high_bidder_team["purse_remaining"] - rev_bid)
-                    
-                    # Apply Surprise player check
-                    # Bug 1 Fix: pass base_price
-                    bonus = rules_engine.check_surprise_bonus(high_bidder_tname, active_player["id"], active_player["base_price"], rev_bid)
-                    if bonus > 0:
-                        models.update_team_purse(high_bidder_tname, models.get_team(high_bidder_tname)["purse_remaining"] + bonus)
-                        models.log_action("BONUS", player_id=active_player["id"], team_name=high_bidder_tname, amount=bonus, note=f"Surprise Player Bonus activated: +{format_inr(bonus)}")
+                    with st.spinner("Processing Sale... Do not refresh."):
+                        if models.get_player(active_player["id"])["status"] == 'SOLD':
+                            st.error("Player already sold! Action aborted.")
+                            st.rerun()
+                        # Process Decline: A gets the player at rev_bid
+                        high_bidder_tname = live_state["current_bidder"]
+                        high_bidder_team = models.get_team(high_bidder_tname)
                         
-                    # Apply Prediction Tax check (Buying captain penalized)
-                    # Bug 2 and 7 Fix
-                    curr_limit = high_bidder_team["max_squad_size"]
-                    taxes = rules_engine.check_prediction_taxes(high_bidder_tname, active_player["id"],curr_limit,active_player["base_price"], rev_bid)
-                    for tax in taxes:
-                        buyer_t = models.get_team(high_bidder_tname)
-                        models.update_team_purse(high_bidder_tname, buyer_t["purse_remaining"] - tax["tax_amount"])
-                        models.log_action("TAX", player_id=active_player["id"], team_name=high_bidder_tname, amount=tax["tax_amount"], note=f"Prediction Tax penalty: -{format_inr(tax['tax_amount'])} triggered by predictor {tax['predictor_captain']}.")
+                        models.update_player_status(active_player["id"], 'SOLD', sold_team=high_bidder_tname, sold_price=rev_bid)
+                        models.update_team_purse(high_bidder_tname, high_bidder_team["purse_remaining"] - rev_bid)
                         
-                    models.log_action("SOLD", player_id=active_player["id"], team_name=high_bidder_tname, amount=rev_bid, note=f"{active_player['name']} sold to {high_bidder_tname} (RTM DECLINED) for {format_inr(rev_bid)}.")
-                    models.clear_live_bid_state()
-                    st.success(f"Released player. Acquired by {high_bidder_tname} for {format_inr(rev_bid)}.")
-                    st.rerun()
+                        # Apply Surprise player check
+                        # Bug 1 Fix: pass base_price
+                        bonus = rules_engine.check_surprise_bonus(high_bidder_tname, active_player["id"], active_player["base_price"], rev_bid)
+                        if bonus > 0:
+                            models.update_team_purse(high_bidder_tname, models.get_team(high_bidder_tname)["purse_remaining"] + bonus)
+                            models.log_action("BONUS", player_id=active_player["id"], team_name=high_bidder_tname, amount=bonus, note=f"Surprise Player Bonus activated: +{format_inr(bonus)}")
+                            
+                        # Apply Prediction Tax check (Buying captain penalized)
+                        # Bug 2 and 7 Fix
+                        curr_limit = high_bidder_team["max_squad_size"]
+                        taxes = rules_engine.check_prediction_taxes(high_bidder_tname, active_player["id"],curr_limit,active_player["base_price"], rev_bid)
+                        for tax in taxes:
+                            buyer_t = models.get_team(high_bidder_tname)
+                            models.update_team_purse(high_bidder_tname, buyer_t["purse_remaining"] - tax["tax_amount"])
+                            models.log_action("TAX", player_id=active_player["id"], team_name=high_bidder_tname, amount=tax["tax_amount"], note=f"Prediction Tax penalty: -{format_inr(tax['tax_amount'])} triggered by predictor {tax['predictor_captain']}.")
+                            
+                        models.log_action("SOLD", player_id=active_player["id"], team_name=high_bidder_tname, amount=rev_bid, note=f"{active_player['name']} sold to {high_bidder_tname} (RTM DECLINED) for {format_inr(rev_bid)}.")
+                        models.clear_live_bid_state()
+                        st.success(f"Released player. Acquired by {high_bidder_tname} for {format_inr(rev_bid)}.")
+                        st.rerun()
                     
             # ── Revised Bid Input for Highest Bidder (RTM_REVISE Phase) ──
             if phase == 'RTM_REVISE' and bidder == tname:
@@ -558,7 +566,6 @@ def render_captain() -> None:
         with connect() as con:
             m_order_raw = get_state(con, "marquee_draft_order")
         if m_order_raw:
-            import json
             m_order = json.loads(m_order_raw)
             st.html("<hr style='border-color: rgba(255,255,255,0.08);'>")
             st.subheader("👑 Marquee Draft Order")

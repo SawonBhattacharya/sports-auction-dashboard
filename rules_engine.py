@@ -91,20 +91,15 @@ def check_prediction_taxes(buyer_team_name: str, player_id: str, squad_target:in
     else:
         tax_penalty = int(min(amount_above_base, base_price))
     
-    # Roster safety check before checking out
-    remaining_after_purchase = buyer_team["purse_remaining"] - sold_price
-    if tax_penalty > remaining_after_purchase:
-        return []
-    else:
-        for pred in all_preds:
-            predictor_captain = pred["captain_name"]
-            triggered_predictions.append({
-                "predictor_captain": predictor_captain,
-                "buying_captain": buyer_captain,
-                "tax_amount": tax_penalty
-            })
-            
-        return triggered_predictions
+    for pred in all_preds:
+        predictor_captain = pred["captain_name"]
+        triggered_predictions.append({
+            "predictor_captain": predictor_captain,
+            "buying_captain": buyer_captain,
+            "tax_amount": tax_penalty
+        })
+        
+    return triggered_predictions
 
 def resolve_last_bid_joker(player_id: str) -> Optional[dict]:
     """Evaluates the silent bids submitted for a player when the Last Bid Joker is active.

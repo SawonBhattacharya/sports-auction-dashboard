@@ -131,6 +131,7 @@ def render_viewer() -> None:
         st.html('</div>')
         
     with col2:
+        '''
         # 3.5 Marquee Draft Order
         with connect() as con:
             m_order_raw = get_state(con, "marquee_draft_order")
@@ -142,7 +143,7 @@ def render_viewer() -> None:
             for idx, c in enumerate(m_order, 1):
                 st.write(f"**{idx}.** {c}")
             st.html('</div>')
-            
+        '''    
         # 4. Top 5 Highest Grossing Players
         st.html('<div class="glass-card">')
         st.subheader("🔥 Top 5 Highest Grossing")

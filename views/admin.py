@@ -763,19 +763,31 @@ def render_live_auction_console(
             st.divider()
             
             # Fetch eligible captains (Has RTM left AND is not the current highest bidder)
-            # Adjust the column name 'name' if your teams table uses 'team_name' instead
             eligible_teams = models.rows(
-                "SELECT captain_name FROM teams WHERE rtm_used = False AND name != ?", 
+                "SELECT captain_name, name, max_squad_size FROM teams WHERE rtm_used = False AND name != ?", 
                 (bidder,)
             )
+            
+            # Filter out captains who cannot afford the current bid due to purse limits or secret taxes
+            valid_challengers = []
+            for t in eligible_teams:
+                tcap = t["captain_name"]
+                tname = t["name"]
+                max_sq = t["max_squad_size"]
+                
+                max_bid = rules_engine.calculate_max_bid(tname, active_p["id"], max_sq)
+                is_taxed = models.rows("SELECT 1 FROM pre_auction_bets WHERE bet_type = 'PREDICTION' AND target_captain = ? AND target_player_id = ?", (tcap, active_p["id"]))
+                adj_max_bid = max_bid - active_p["base_price"] if is_taxed else max_bid
+                
+                if adj_max_bid >= curr_bid:
+                    valid_challengers.append(tcap)
             
             rc1, rc2 = st.columns(2)
             
             with rc1:
                 st.markdown("##### Verbal RTM+ Activation")
-                if eligible_teams:
-                    challenger_names = [t["captain_name"] for t in eligible_teams]
-                    selected_challenger = st.selectbox("Select Captain triggering RTM+:", challenger_names)
+                if valid_challengers:
+                    selected_challenger = st.selectbox("Select Captain triggering RTM+:", valid_challengers)
                     
                     if st.button(f"Activate RTM+ for {selected_challenger}", type="primary", use_container_width=True):
                         # 1. Instant Burn: Mark this captain's RTM+ card as used immediately
@@ -795,7 +807,7 @@ def render_live_auction_console(
                         st.success(f"RTM+ locked in for {selected_challenger}. Moving to Revision Phase.")
                         st.rerun()
                 else:
-                    st.warning("No other captains have an RTM+ card available.")
+                    st.warning("⚠️ No opponent captains have the available purse capacity or RTM cards to match this bid.")
             
             with rc2:
                 st.markdown("##### No Challenge")

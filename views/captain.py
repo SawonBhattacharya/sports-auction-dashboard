@@ -93,22 +93,28 @@ def render_captain() -> None:
                 available_for_marquee = [p for p in available_for_marquee if p["id"] not in already_nominated_ids and not is_captain_player(p["name"])]
                 am_options = {f"{p['name']} ({p['seeding']})": p["id"] for p in available_for_marquee}
                 
-                draft_names = ["Select a player to nominate..."] + list(am_options.keys())
-                selected_draft = st.selectbox("Choose Marquee Player", draft_names, key="marquee_draft_sel")
-                
-                if selected_draft != "Select a player to nominate...":
-                    chosen_pid = am_options[selected_draft]
-                    if st.button("Confirm Selection", use_container_width=True):
-                        models.nominate_marquee(chosen_pid, captain_name)
-                        new_idx = turn_idx + 1
-                        with connect() as con:
-                            set_state(con, "marquee_draft_turn_index", str(new_idx))
-                            if new_idx >= len(order):
-                                set_state(con, "marquee_draft_completed", "TRUE")
-                            con.commit()
-                        models.log_action("MARQUEE_NOMINATE", player_id=chosen_pid, team_name=tname, note=f"{captain_name} nominated {selected_draft.split(' (')[0]} as marquee.")
-                        st.success(f"Successfully drafted {selected_draft}!")
-                        st.rerun()
+                with st.form("marquee_draft_form"):
+                    draft_names = ["Select a player to nominate..."] + list(am_options.keys())
+                    selected_draft = st.selectbox("Choose Marquee Player", draft_names, key="marquee_draft_sel")
+                    
+                    submitted_marquee = st.form_submit_button("Confirm Selection", use_container_width=True)
+                    
+                    if submitted_marquee:
+                        if selected_draft == "Select a player to nominate...":
+                            st.error("❌ Please select a valid player from the dropdown.")
+                        else:
+                            with st.spinner("Saving your Marquee Selection..."):
+                                chosen_pid = am_options[selected_draft]
+                                models.nominate_marquee(chosen_pid, captain_name)
+                                new_idx = turn_idx + 1
+                                with connect() as con:
+                                    set_state(con, "marquee_draft_turn_index", str(new_idx))
+                                    if new_idx >= len(order):
+                                        set_state(con, "marquee_draft_completed", "TRUE")
+                                    con.commit()
+                                models.log_action("MARQUEE_NOMINATE", player_id=chosen_pid, team_name=tname, note=f"{captain_name} nominated {selected_draft.split(' (')[0]} as marquee.")
+                                st.success(f"Successfully drafted {selected_draft}!")
+                                st.rerun()
             else:
                 st.info(f"⏳ Waiting for **{current_drafter}** to nominate their marquee player...")
                 
@@ -163,19 +169,20 @@ def render_captain() -> None:
                 if len(active_preds) > 2:
                     st.error("❌ Rule Violation: You can only select a maximum of 2 prediction taxes! Please remove one and try again.")
                 else:
-                    # Clear old bets
-                    models.execute("DELETE FROM pre_auction_bets WHERE captain_name = ?", (captain_name,))
-                    
-                    # Save Surprise
-                    if selected_surprise != "Select player...":
-                        models.save_surprise_player(captain_name, player_options[selected_surprise])
+                    with st.spinner("Encrypting and saving your secret strategies..."):
+                        # Clear old bets
+                        models.execute("DELETE FROM pre_auction_bets WHERE captain_name = ?", (captain_name,))
                         
-                    # Save Predictions
-                    for rival, val in active_preds.items():
-                        models.save_prediction(captain_name, rival, player_options[val])
-                        
-                    st.success("✅ All secret strategies saved successfully!")
-                    st.rerun()
+                        # Save Surprise
+                        if selected_surprise != "Select player...":
+                            models.save_surprise_player(captain_name, player_options[selected_surprise])
+                            
+                        # Save Predictions
+                        for rival, val in active_preds.items():
+                            models.save_prediction(captain_name, rival, player_options[val])
+                            
+                        st.success("✅ All secret strategies saved successfully!")
+                        st.rerun()
                     
         st.html('</div>')
 

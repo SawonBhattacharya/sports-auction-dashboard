@@ -832,10 +832,12 @@ def render_live_auction_console(
                         models.log_action("BONUS", player_id=active_p["id"], team_name=bidder, amount=bonus, note=f"Surprise Player Bonus: +{format_inr(bonus)}")
                         st.toast(f"🎉 Surprise Player Applied Successfully!", icon="🎁")
                     
-                    current_teams = models.get_all_teams()
-                    curr_limit = current_teams[0]["max_squad_size"] if current_teams else 10
+                    # Bug 7 Fix: use specific team's max squad size
+                    b_t = models.get_team(bidder)
+                    curr_limit = b_t["max_squad_size"]
                     taxes = rules_engine.check_prediction_taxes(bidder, active_p["id"], curr_limit, active_p["base_price"], curr_bid)
                     for tax in taxes:
+                        # fetch again to have latest purse
                         b_t = models.get_team(bidder)
                         models.update_team_purse(bidder, b_t["purse_remaining"] - tax["tax_amount"])
                         models.log_action("TAX", player_id=active_p["id"], team_name=bidder, amount=tax["tax_amount"], note=f"Prediction Tax penalty: -{format_inr(tax['tax_amount'])} triggered by predictor {tax['predictor_captain']}.")
@@ -897,8 +899,9 @@ def render_live_auction_console(
                 if bonus > 0:
                     models.update_team_purse(c_team["name"], models.get_team(c_team["name"])["purse_remaining"] + bonus)
                     models.log_action("BONUS", player_id=active_p["id"], team_name=c_team["name"], amount=bonus, note=f"Surprise Player Bonus: +{format_inr(bonus)}")
-                current_teams = models.get_all_teams()
-                curr_limit = current_teams[0]["max_squad_size"] if current_teams else 10    
+                
+                # Bug 7 Fix: use specific team's max squad size
+                curr_limit = c_team["max_squad_size"]
                 taxes = rules_engine.check_prediction_taxes(c_team["name"], active_p["id"],curr_limit,active_p["base_price"], rev_price)
                 for tax in taxes:
                     b_t = models.get_team(c_team["name"])
@@ -924,11 +927,12 @@ def render_live_auction_console(
                     # Drop this straight into your allocation code handlers:
                     st.toast(f"🎉 Surprise Player Applied Successfully!", icon="🎁")
 
-                    
-                current_teams = models.get_all_teams()
-                curr_limit = current_teams[0]["max_squad_size"] if current_teams else 10
+                # Bug 7 Fix
+                b_t = models.get_team(bidder)
+                curr_limit = b_t["max_squad_size"]
                 taxes = rules_engine.check_prediction_taxes(bidder, active_p["id"],curr_limit,active_p["base_price"], rev_price)
                 for tax in taxes:
+                    # fetch again to have latest purse
                     b_t = models.get_team(bidder)
                     models.update_team_purse(bidder, b_t["purse_remaining"] - tax["tax_amount"])
                     models.log_action("TAX", player_id=active_p["id"], team_name=bidder, amount=tax["tax_amount"], note=f"Prediction Tax penalty: -{format_inr(tax['tax_amount'])} triggered by predictor {tax['predictor_captain']}.")
@@ -956,8 +960,9 @@ def render_live_auction_console(
                     w_team = res["winning_team"]
                     w_price = res["winning_price"]
                     w_captain = res["winning_captain"]
+                    # Bug 10 Fix: team uses rtm_used column
                     rtm_available = models.rows(
-                        "SELECT COUNT(*) as cnt FROM teams WHERE rtm_plus = 'AVAILABLE'"
+                        "SELECT COUNT(*) as cnt FROM teams WHERE rtm_used = FALSE"
                     )[0]["cnt"] > 0
                     if rtm_available:
                         models.update_live_bid_state(
@@ -986,8 +991,9 @@ def render_live_auction_console(
                             models.update_team_purse(w_team, models.get_team(w_team)["purse_remaining"] + bonus)
                             models.log_action("BONUS", player_id=active_p["id"], team_name=w_team, amount=bonus, note=f"Surprise Player Bonus: +{format_inr(bonus)}")
                             
-                        current_teams = models.get_all_teams()
-                        curr_limit = current_teams[0]["max_squad_size"] if current_teams else 10
+                        # Bug 7 Fix
+                        team_d = models.get_team(w_team)
+                        curr_limit = team_d["max_squad_size"]
                         taxes = rules_engine.check_prediction_taxes(w_team, active_p["id"],curr_limit,active_p["base_price"], w_price)
                         for tax in taxes:
                             b_t = models.get_team(w_team)

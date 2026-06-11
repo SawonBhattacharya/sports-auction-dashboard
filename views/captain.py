@@ -104,7 +104,19 @@ def render_captain() -> None:
                 
                 available_for_marquee = models.rows("SELECT id, name, seeding FROM players WHERE status='AVAILABLE' AND is_marquee=FALSE ORDER BY name")
                 already_nominated_ids = {m["id"] for m in models.get_marquee_players()}
-                available_for_marquee = [p for p in available_for_marquee if p["id"] not in already_nominated_ids and not is_captain_player(p["name"])]
+                # Bug 8 Fix: Do not allow picking a player currently on the auction block or spin wheel target
+                active_block_id = live_state["player_id"] if live_state else None
+                spin_target_id_for_block = None
+                with connect() as con:
+                    spin_target_id_for_block = get_state(con, "wheel_target_player_id")
+                
+                available_for_marquee = [
+                    p for p in available_for_marquee 
+                    if p["id"] not in already_nominated_ids 
+                    and not is_captain_player(p["name"])
+                    and p["id"] != active_block_id
+                    and p["id"] != spin_target_id_for_block
+                ]
                 am_options = {f"{p['name']} ({p['seeding']})": p["id"] for p in available_for_marquee}
                 
                 with st.form("marquee_draft_form"):
@@ -336,7 +348,13 @@ def render_captain() -> None:
                 # Can be triggered in RTM_PROMPT phase if they are NOT the current highest bidder
                 if phase == 'RTM_PROMPT':
                     if bidder != tname:
-                        if jc2.button("💥 Trigger RTM+ Card", use_container_width=True):
+                        # Bug 4 Fix: Calculate adjusted max bid before allowing RTM trigger
+                        is_taxed_rtm = models.rows("SELECT 1 FROM pre_auction_bets WHERE bet_type='PREDICTION' AND target_captain=? AND target_player_id=?", (captain_name, active_player["id"]))
+                        rtm_adj_max = max_allowed_bid - active_player["base_price"] if is_taxed_rtm else max_allowed_bid
+                        
+                        if rtm_adj_max < curr_bid:
+                            jc2.info(f"⚠️ RTM+ unavailable: Adjusted max bid ({format_inr(rtm_adj_max)}) is too low due to tax.")
+                        elif jc2.button("💥 Trigger RTM+ Card", use_container_width=True):
                             models.update_live_bid_state(
                                 player_id=active_player["id"],
                                 current_bid=curr_bid,
@@ -381,15 +399,19 @@ def render_captain() -> None:
                         f"{format_inr(bid_amount)}"
                     )
                     
+                # Bug 5 Fix: Account for prediction tax in silent bid max
+                is_taxed_silent = models.rows("SELECT 1 FROM pre_auction_bets WHERE bet_type='PREDICTION' AND target_captain=? AND target_player_id=?", (captain_name, active_player["id"]))
+                silent_adj_max = max_allowed_bid - active_player["base_price"] if is_taxed_silent else max_allowed_bid
+                
                 silent_amt = st.number_input(
                     "Your Silent Max Bid (INR)",
-                    min_value=int(active_player["base_price"]),
-                    max_value=int(max_allowed_bid),
+                    min_value=int(max(active_player["base_price"], curr_bid)),
+                    max_value=int(silent_adj_max),
                     value=int(max(active_player["base_price"], curr_bid)),
                     step=10_00_000
                 )
                 if st.button("Submit Silent Bid", use_container_width=True):
-                    if silent_amt > max_allowed_bid:
+                    if silent_amt > silent_adj_max:
                         st.error("❌ Bid exceeds your Maximum Allowed Bid!")
                     else:
                         models.submit_silent_bid(active_player["id"], captain_name, silent_amt)
@@ -414,14 +436,15 @@ def render_captain() -> None:
                         models.update_team_purse(tname, team["purse_remaining"] - rev_bid)
                         
                         # Apply Surprise player check
-                        bonus = rules_engine.check_surprise_bonus(tname, active_player["id"], rev_bid)
+                        # Bug 1 Fix: Pass base_price
+                        bonus = rules_engine.check_surprise_bonus(tname, active_player["id"], active_player["base_price"], rev_bid)
                         if bonus > 0:
                             models.update_team_purse(tname, models.get_team(tname)["purse_remaining"] + bonus)
                             models.log_action("BONUS", player_id=active_player["id"], team_name=tname, amount=bonus, note=f"Surprise Player Bonus activated: +{format_inr(bonus)}")
                             
                         # Apply Prediction Tax check (Buying captain penalized)
-                        current_teams = models.get_all_teams()
-                        curr_limit = current_teams[0]["max_squad_size"] if current_teams else 10
+                        # Bug 7 fix: use the specific team's max squad size
+                        curr_limit = team["max_squad_size"]
                         taxes = rules_engine.check_prediction_taxes(tname, active_player["id"],curr_limit,active_player["base_price"], rev_bid)
                         for tax in taxes:
                             buyer_t = models.get_team(tname)
@@ -442,12 +465,15 @@ def render_captain() -> None:
                     models.update_team_purse(high_bidder_tname, high_bidder_team["purse_remaining"] - rev_bid)
                     
                     # Apply Surprise player check
-                    bonus = rules_engine.check_surprise_bonus(high_bidder_tname, active_player["id"], rev_bid)
+                    # Bug 1 Fix: pass base_price
+                    bonus = rules_engine.check_surprise_bonus(high_bidder_tname, active_player["id"], active_player["base_price"], rev_bid)
                     if bonus > 0:
                         models.update_team_purse(high_bidder_tname, models.get_team(high_bidder_tname)["purse_remaining"] + bonus)
                         models.log_action("BONUS", player_id=active_player["id"], team_name=high_bidder_tname, amount=bonus, note=f"Surprise Player Bonus activated: +{format_inr(bonus)}")
                         
                     # Apply Prediction Tax check (Buying captain penalized)
+                    # Bug 2 and 7 Fix
+                    curr_limit = high_bidder_team["max_squad_size"]
                     taxes = rules_engine.check_prediction_taxes(high_bidder_tname, active_player["id"],curr_limit,active_player["base_price"], rev_bid)
                     for tax in taxes:
                         buyer_t = models.get_team(high_bidder_tname)

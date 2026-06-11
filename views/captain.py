@@ -553,7 +553,7 @@ def render_captain() -> None:
 
             elif has_joker_type == 'FORCE_NOMINATION':
                 st.info("Force Nomination Joker: ❌ USED")
-                
+        '''       
         # 3.5 Marquee Draft Order
         with connect() as con:
             m_order_raw = get_state(con, "marquee_draft_order")
@@ -564,7 +564,7 @@ def render_captain() -> None:
             st.subheader("👑 Marquee Draft Order")
             order_text = " → ".join([f"**{idx}.** {c}" for idx, c in enumerate(m_order, 1)])
             st.write(order_text)
-            
+        '''           
         # 4. Squad display
         st.html("<hr style='border-color: rgba(255,255,255,0.08);'>")
         st.subheader("📋 Team Build Progress Grid")

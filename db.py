@@ -107,6 +107,7 @@ def connect() -> _DBConn:
             st.stop()
         try:
             raw = psycopg2.connect(url, cursor_factory=RealDictCursor)
+            raw.autocommit = True
             return _DBConn(raw, is_pg=True)
         except Exception as e:
             st.error(f"❌ Cloud database connection failed: {e}")

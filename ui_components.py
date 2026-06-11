@@ -922,7 +922,7 @@ def render_team_progress_grid(db, is_live=False) -> None:
         max_size = team["max_squad_size"]
         
         empty_slots = max_size - roster_count
-        reserved_money = max(0, (empty_slots - 1) * 20_00_000)
+        reserved_money = max(0, (empty_slots - 1) * 50_00_000)
         max_bid = max(0, purse_val - reserved_money)
         
         img_src = find_team_logo(team)

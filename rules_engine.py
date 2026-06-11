@@ -39,46 +39,8 @@ def calculate_max_bid(team_name: str, active_player_id: str, squad_target: int) 
         # No more players required or this is the final slot, entire purse is liquid
         return current_purse
 
-    # Get all unauctioned (AVAILABLE) players excluding the active player on the block
-    available_players = models.rows(
-        "SELECT seeding FROM players WHERE status = 'AVAILABLE' AND id != ?",
-        (active_player_id,)
-    )
-    
-    # Compute available tier frequencies in the remaining pool
-    seeding_counts = {"Impact": 0, "Rising": 0, "Premium": 0, "Icon": 0}
-    for p in available_players:
-        s = p["seeding"]
-        if s in seeding_counts:
-            seeding_counts[s] += 1
-            
-    # Extract pool bounds
-    r_impact = seeding_counts["Impact"]
-    r_rising = seeding_counts["Rising"]
-    r_premium = seeding_counts["Premium"]
-    r_icon = seeding_counts["Icon"]
-
-    # --- Declarative Safety Engine Matrix ---
-    impact_used = min(slots_after_purchase, r_impact)
-    rising_used = min(max(slots_after_purchase - r_impact, 0), r_rising)
-    premium_used = min(max(slots_after_purchase - r_impact - r_rising, 0), r_premium)
-    icon_used = min(max(slots_after_purchase - r_impact - r_rising - r_premium, 0), r_icon)
-    
-    # Base reserve required calculated from physical pool availability
-    reserve_required = (
-        (impact_used * TIER_COSTS["Impact"]) +
-        (rising_used * TIER_COSTS["Rising"]) +
-        (premium_used * TIER_COSTS["Premium"]) +
-        (icon_used * TIER_COSTS["Icon"])
-    )
-    
-    # Edge Case Fallback: If the global player pool is heavily depleted and cannot 
-    # physically satisfy slots_after_purchase, assign the lowest tier cost (Impact) 
-    # to the missing theoretical slots to maintain system stability.
-    total_slots_mapped = impact_used + rising_used + premium_used + icon_used
-    if total_slots_mapped < slots_after_purchase:
-        unallocated_slots = slots_after_purchase - total_slots_mapped
-        reserve_required += unallocated_slots * TIER_COSTS["Impact"]
+    # Base reserve required calculated as 0.5 Cr (50 Lakhs) per remaining slot
+    reserve_required = slots_after_purchase * 50_00_000
         
     max_bid = current_purse - reserve_required
     return max(0, max_bid)

@@ -175,12 +175,17 @@ def render_captain() -> None:
                     st.dataframe(table_data, hide_index=True, use_container_width=True)
                     
             st.info("Please wait for the Admin to launch the Live Auction.")
+            
+            st.html("<br>")
+            if st.button("✏️ Edit Secret Strategies (Reset Selections)", use_container_width=True):
+                models.execute("DELETE FROM pre_auction_bets WHERE captain_name = ?", (captain_name,))
+                st.rerun()
         else:
             with st.form("secret_strategy_form"):
                 st.markdown("#### 🎁 Surprise Player")
                 selected_surprise = st.selectbox("Select your Surprise Player", surprise_names, index=default_surp_idx)
                 
-                st.markdown("#### 🔮 Prediction Taxes (Max 2)")
+                st.markdown("#### 🔮 Prediction Taxes (Select exactly 2)")
                 
                 selected_preds = {}
                 for rival in rivals:
@@ -196,16 +201,17 @@ def render_captain() -> None:
                     # Validation: Count how many predictions are active
                     active_preds = {rival: val for rival, val in selected_preds.items() if val != "No prediction..."}
                     
-                    if len(active_preds) > 2:
-                        st.error("❌ Rule Violation: You can only select a maximum of 2 prediction taxes! Please remove one and try again.")
+                    if selected_surprise == "Select player...":
+                        st.error("❌ Rule Violation: You MUST select 1 Surprise Player before saving!")
+                    elif len(active_preds) != 2:
+                        st.error("❌ Rule Violation: You MUST select exactly 2 Prediction Taxes before saving!")
                     else:
                         with st.spinner("Encrypting and saving your secret strategies..."):
                             # Clear old bets
                             models.execute("DELETE FROM pre_auction_bets WHERE captain_name = ?", (captain_name,))
                             
                             # Save Surprise
-                            if selected_surprise != "Select player...":
-                                models.save_surprise_player(captain_name, player_options[selected_surprise])
+                            models.save_surprise_player(captain_name, player_options[selected_surprise])
                                 
                             # Save Predictions
                             for rival, val in active_preds.items():

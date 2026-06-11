@@ -146,43 +146,59 @@ def render_captain() -> None:
         
         rivals = [c for c in CAPTAINS.keys() if c != captain_name]
         
-        with st.form("secret_strategy_form"):
-            st.markdown("#### 🎁 Surprise Player")
-            selected_surprise = st.selectbox("Select your Surprise Player", surprise_names, index=default_surp_idx)
-            
-            st.markdown("#### 🔮 Prediction Taxes (Max 2)")
-            
-            selected_preds = {}
-            for rival in rivals:
-                cur_pred_id = pred_map.get(rival)
-                cur_pred_name = next((n for n, pid in player_options.items() if pid == cur_pred_id), None)
-                default_pred_idx = pred_names.index(cur_pred_name) if cur_pred_name in pred_names else 0
+        has_submitted_strategy = (current_surprise_id is not None) or (len(preds) > 0)
+        
+        if has_submitted_strategy:
+            st.success("✅ Your secret strategies are securely locked in!")
+            if current_surprise_id:
+                surp_name = next((n for n, pid in player_options.items() if pid == current_surprise_id), "Unknown")
+                st.write(f"**🎁 Surprise Player:** {surp_name}")
+            if preds:
+                st.write("**🔮 Prediction Taxes:**")
+                for p in preds:
+                    t_cap = p["target_captain"]
+                    t_pid = p["target_player_id"]
+                    t_name = next((n for n, pid in player_options.items() if pid == t_pid), "Unknown")
+                    st.write(f"- {t_cap} will buy {t_name}")
+            st.info("Please wait for the Admin to launch the Live Auction.")
+        else:
+            with st.form("secret_strategy_form"):
+                st.markdown("#### 🎁 Surprise Player")
+                selected_surprise = st.selectbox("Select your Surprise Player", surprise_names, index=default_surp_idx)
                 
-                selected_preds[rival] = st.selectbox(f"Rival '{rival}' will buy:", pred_names, index=default_pred_idx)
+                st.markdown("#### 🔮 Prediction Taxes (Max 2)")
                 
-            submitted = st.form_submit_button("💾 Save All Strategies", use_container_width=True)
-            
-            if submitted:
-                # Validation: Count how many predictions are active
-                active_preds = {rival: val for rival, val in selected_preds.items() if val != "No prediction..."}
+                selected_preds = {}
+                for rival in rivals:
+                    cur_pred_id = pred_map.get(rival)
+                    cur_pred_name = next((n for n, pid in player_options.items() if pid == cur_pred_id), None)
+                    default_pred_idx = pred_names.index(cur_pred_name) if cur_pred_name in pred_names else 0
+                    
+                    selected_preds[rival] = st.selectbox(f"Rival '{rival}' will buy:", pred_names, index=default_pred_idx)
+                    
+                submitted = st.form_submit_button("💾 Save All Strategies", use_container_width=True)
                 
-                if len(active_preds) > 2:
-                    st.error("❌ Rule Violation: You can only select a maximum of 2 prediction taxes! Please remove one and try again.")
-                else:
-                    with st.spinner("Encrypting and saving your secret strategies..."):
-                        # Clear old bets
-                        models.execute("DELETE FROM pre_auction_bets WHERE captain_name = ?", (captain_name,))
-                        
-                        # Save Surprise
-                        if selected_surprise != "Select player...":
-                            models.save_surprise_player(captain_name, player_options[selected_surprise])
+                if submitted:
+                    # Validation: Count how many predictions are active
+                    active_preds = {rival: val for rival, val in selected_preds.items() if val != "No prediction..."}
+                    
+                    if len(active_preds) > 2:
+                        st.error("❌ Rule Violation: You can only select a maximum of 2 prediction taxes! Please remove one and try again.")
+                    else:
+                        with st.spinner("Encrypting and saving your secret strategies..."):
+                            # Clear old bets
+                            models.execute("DELETE FROM pre_auction_bets WHERE captain_name = ?", (captain_name,))
                             
-                        # Save Predictions
-                        for rival, val in active_preds.items():
-                            models.save_prediction(captain_name, rival, player_options[val])
-                            
-                        st.success("✅ All secret strategies saved successfully!")
-                        st.rerun()
+                            # Save Surprise
+                            if selected_surprise != "Select player...":
+                                models.save_surprise_player(captain_name, player_options[selected_surprise])
+                                
+                            # Save Predictions
+                            for rival, val in active_preds.items():
+                                models.save_prediction(captain_name, rival, player_options[val])
+                                
+                            st.success("✅ All secret strategies saved successfully!")
+                            st.rerun()
                     
         st.html('</div>')
 

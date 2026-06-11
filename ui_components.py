@@ -951,7 +951,7 @@ def render_team_progress_grid(db, is_live=False) -> None:
         cols[i].html(textwrap.dedent(html))
 
 def render_league_poster():
-    poster_path = Path("images/league_poster.jpeg")  # change filename
+    poster_path = Path("images/league_poster.png")  # change filename
 
     if poster_path.exists():
         st.markdown(

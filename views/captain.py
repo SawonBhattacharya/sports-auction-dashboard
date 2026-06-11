@@ -336,8 +336,7 @@ def render_captain() -> None:
                         # 🟢 ADD THIS LINE TO BURN THE CARD IMMEDIATELY:
     
     
-                else:
-                    jc1.info("Last Bid Joker is available but cannot be used in this phase.")
+                # We no longer display the redundant "Cannot be used in this phase" info message
             elif has_joker_type == 'LAST_BID':
                 jc1.info("Last Bid Joker: ❌ USED")
             else:
@@ -405,9 +404,9 @@ def render_captain() -> None:
                 
                 silent_amt = st.number_input(
                     "Your Silent Max Bid (INR)",
-                    min_value=int(max(active_player["base_price"], curr_bid)),
+                    min_value=0,
                     max_value=int(silent_adj_max),
-                    value=int(max(active_player["base_price"], curr_bid)),
+                    value=0,
                     step=10_00_000
                 )
                 if st.button("Submit Silent Bid", use_container_width=True):

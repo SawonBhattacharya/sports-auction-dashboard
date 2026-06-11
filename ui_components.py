@@ -11,7 +11,10 @@ import models
 
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".PNG", ".JPG", ".JPEG", ".WEBP")
 
-def image_file_to_data_uri(path: str | Path) -> Optional[str]:
+IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".PNG", ".JPG", ".JPEG", ".WEBP")
+
+@st.cache_data(show_spinner=False, max_entries=200)
+def image_file_to_data_uri(path: str) -> Optional[str]:
     """Return a local image as a data URI so it renders reliably inside markdown HTML."""
     img_path = Path(path)
     if not img_path.exists() or not img_path.is_file():
@@ -29,13 +32,14 @@ def image_file_to_data_uri(path: str | Path) -> Optional[str]:
 def _normalize_asset_name(value: str) -> str:
     return "".join(ch.lower() for ch in value if ch.isalnum())
 
+@st.cache_data(show_spinner=False)
 def find_team_logo(team: dict) -> Optional[str]:
     """Resolve a team's logo from DB value, known asset names, and local logo folder."""
     logo_url = (team.get("logo_url") or "").strip()
     if logo_url:
         if logo_url.startswith(("http://", "https://", "data:image/")):
             return logo_url
-        local_logo = image_file_to_data_uri(logo_url)
+        local_logo = image_file_to_data_uri(str(logo_url))
         if local_logo:
             return local_logo
 
@@ -45,7 +49,7 @@ def find_team_logo(team: dict) -> Optional[str]:
         if not raw_name:
             continue
         for ext in IMAGE_EXTENSIONS:
-            local_logo = image_file_to_data_uri(logo_dir / f"{raw_name}{ext}")
+            local_logo = image_file_to_data_uri(str(logo_dir / f"{raw_name}{ext}"))
             if local_logo:
                 return local_logo
 
@@ -55,7 +59,7 @@ def find_team_logo(team: dict) -> Optional[str]:
             for file_path in logo_dir.iterdir():
                 if file_path.is_file() and file_path.suffix in IMAGE_EXTENSIONS:
                     if _normalize_asset_name(file_path.stem) in target_names:
-                        return image_file_to_data_uri(file_path)
+                        return image_file_to_data_uri(str(file_path))
         except OSError:
             pass
 
@@ -623,6 +627,7 @@ def render_spin_wheel(player_names: list[str], target_player: str, target_player
     components.html(html_code, height=380)
     return True
 
+@st.cache_data(show_spinner=False, max_entries=500)
 def find_player_photo(player_name: str) -> Optional[str]:
     """Search for a player's photo under images/player_photo/ by trying different extensions
     and checking case-insensitively.
@@ -650,6 +655,7 @@ def find_player_photo(player_name: str) -> Optional[str]:
         
     return None
 
+@st.cache_data(show_spinner=False, max_entries=500)
 def find_player_thumbnail(player_name: str) -> Optional[str]:
     """Search for the small roster thumbnail generated from the player photo."""
     thumb_dir = Path("images/player_thumb")
@@ -764,7 +770,8 @@ def render_team_rosters_table(db) -> None:
     """Render each team's current members with name, seed, and purchase price."""
     render_team_squad_rows(db)
 
-def image_file_to_small_data_uri(path: str | Path, max_bytes: int = 80_000) -> Optional[str]:
+@st.cache_data(show_spinner=False, max_entries=500)
+def image_file_to_small_data_uri(path: str, max_bytes: int = 80_000) -> Optional[str]:
     """Inline only reasonably small images to keep roster HTML compact."""
     img_path = Path(path)
     if not img_path.exists() or not img_path.is_file():
@@ -774,7 +781,7 @@ def image_file_to_small_data_uri(path: str | Path, max_bytes: int = 80_000) -> O
             return None
     except OSError:
         return None
-    return image_file_to_data_uri(img_path)
+    return image_file_to_data_uri(str(img_path))
 
 def _player_img_html(player_name: str) -> str:
     photo_path = find_player_thumbnail(player_name) or find_player_photo(player_name)

@@ -8,13 +8,22 @@ from db import connect, closing, get_state, set_state
 from ui_components import render_header, render_footer, inject_css, render_team_progress_grid, render_team_squad_rows, render_player_card, render_spin_wheel, render_sale_celebration,render_league_poster
 import rules_engine
 
+import concurrent.futures
+
 @st.fragment(run_every="2s")
 def captain_smart_watcher():
-    live_state = models.get_live_bid_state()
-    global_status = models.get_global_status()
-    with connect() as con:
-        spin_target = get_state(con, "wheel_target_player_id")
-        turn_idx = get_state(con, "marquee_draft_turn_index")
+    def get_db_states():
+        with connect() as con:
+            return get_state(con, "wheel_target_player_id"), get_state(con, "marquee_draft_turn_index")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        f_live = executor.submit(models.get_live_bid_state)
+        f_glob = executor.submit(models.get_global_status)
+        f_states = executor.submit(get_db_states)
+        
+        live_state = f_live.result()
+        global_status = f_glob.result()
+        spin_target, turn_idx = f_states.result()
         
     current_hash = hash(str(live_state) + str(global_status) + str(spin_target) + str(turn_idx))
     if st.session_state.get("captain_hash") != current_hash:
@@ -36,8 +45,13 @@ def render_captain() -> None:
         st.stop()
         
     tname = team["name"]
-    global_status = models.get_global_status()
-    live_state = models.get_live_bid_state()
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        f_glob = executor.submit(models.get_global_status)
+        f_live = executor.submit(models.get_live_bid_state)
+        
+        global_status = f_glob.result()
+        live_state = f_live.result()
     
     # 1. Header showing opponent stats and highlight turn
     # We find whose marquee turn it is

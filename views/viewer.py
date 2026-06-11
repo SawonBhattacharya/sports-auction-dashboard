@@ -4,13 +4,24 @@ import models
 from db import connect, closing, get_state
 from ui_components import render_header, render_footer, render_spin_wheel, inject_css, render_team_progress_grid, render_team_squad_rows, render_player_card, render_sale_celebration,render_league_poster
 
+import concurrent.futures
+
 @st.fragment(run_every="2s")
 def viewer_smart_watcher():
-    live_state = models.get_live_bid_state()
-    global_status = models.get_global_status()
-    with connect() as con:
-        spin_target = get_state(con, "wheel_target_player_id")
-    sold_count = len(models.rows("SELECT id FROM players WHERE status='SOLD'"))
+    def get_spin_target():
+        with connect() as con:
+            return get_state(con, "wheel_target_player_id")
+            
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        f_live = executor.submit(models.get_live_bid_state)
+        f_glob = executor.submit(models.get_global_status)
+        f_sold = executor.submit(lambda: len(models.rows("SELECT id FROM players WHERE status='SOLD'")))
+        f_spin = executor.submit(get_spin_target)
+        
+        live_state = f_live.result()
+        global_status = f_glob.result()
+        sold_count = f_sold.result()
+        spin_target = f_spin.result()
     
     current_hash = hash(str(live_state) + str(global_status) + str(spin_target) + str(sold_count))
     if st.session_state.get("viewer_hash") != current_hash:
@@ -25,9 +36,17 @@ def render_viewer() -> None:
     inject_css()
     render_sale_celebration()
     
-    # 1. Fetch live state from DB
-    live_state = models.get_live_bid_state()
-    global_status = models.get_global_status()
+    # 1. Fetch live state from DB concurrently
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        f_live = executor.submit(models.get_live_bid_state)
+        f_glob = executor.submit(models.get_global_status)
+        f_top = executor.submit(models.rows, "SELECT name, sold_team, sold_price FROM players WHERE status = 'SOLD' ORDER BY sold_price DESC LIMIT 5")
+        f_logs = executor.submit(models.rows, "SELECT note, created_at FROM audit_log ORDER BY id DESC LIMIT 8")
+        
+        live_state = f_live.result()
+        global_status = f_glob.result()
+        top_players = f_top.result()
+        logs = f_logs.result()
     
     # Render the top captain headers
     # We pass active bidder if there is one
@@ -116,9 +135,6 @@ def render_viewer() -> None:
         st.html('<div class="glass-card">')
         st.subheader("🔥 Top 5 Highest Grossing")
         
-        top_players = models.rows(
-            "SELECT name, sold_team, sold_price FROM players WHERE status = 'SOLD' ORDER BY sold_price DESC LIMIT 5"
-        )
         if top_players:
             for idx, p in enumerate(top_players, 1):
                 st.markdown(
@@ -134,7 +150,6 @@ def render_viewer() -> None:
         st.html('<div class="glass-card">')
         st.subheader("📰 Live Audit Log")
         
-        logs = models.rows("SELECT note, created_at FROM audit_log ORDER BY id DESC LIMIT 8")
         if logs:
             from datetime import datetime, timezone, timedelta
             ist_tz = timezone(timedelta(hours=5, minutes=30))

@@ -13,12 +13,19 @@ from db import connect, closing, get_state, set_state, init_db
 import ui_components
 
 
+import concurrent.futures
+
 @st.fragment(run_every="2s")
 def admin_smart_watcher():
-    live_state = models.get_live_bid_state()
-    bets_count = len(models.rows("SELECT id FROM pre_auction_bets"))
-    silent_bids_count = len(models.rows("SELECT player_id, captain_name FROM silent_bids"))
-    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        f_live = executor.submit(models.get_live_bid_state)
+        f_bets = executor.submit(lambda: len(models.rows("SELECT id FROM pre_auction_bets")))
+        f_silent = executor.submit(lambda: len(models.rows("SELECT player_id, captain_name FROM silent_bids")))
+        
+        live_state = f_live.result()
+        bets_count = f_bets.result()
+        silent_bids_count = f_silent.result()
+        
     current_hash = hash(str(live_state) + str(bets_count) + str(silent_bids_count))
     if st.session_state.get("admin_hash") != current_hash:
         if "admin_hash" in st.session_state:

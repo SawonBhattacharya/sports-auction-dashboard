@@ -628,6 +628,10 @@ def render_live_auction_console(
             b_cols = st.columns(4)
             teams = models.get_all_teams()
             
+            # Cache all prediction taxes for the active player to avoid N+1 queries
+            taxes = models.rows("SELECT target_captain FROM pre_auction_bets WHERE bet_type = 'PREDICTION' AND target_player_id = ?", (active_p["id"],))
+            taxed_captains = {t["target_captain"] for t in taxes}
+            
             for idx, t in enumerate(teams):
                 tname = t["name"]
                 tcap = t["captain_name"]
@@ -639,8 +643,8 @@ def render_live_auction_console(
                 # Check purse safety max bid
                 max_bid = rules_engine.calculate_max_bid(tname, active_p["id"], t["max_squad_size"])
                 
-                # Hidden Penalty Logic
-                is_taxed = models.rows("SELECT 1 FROM pre_auction_bets WHERE bet_type = 'PREDICTION' AND target_captain = ? AND target_player_id = ?", (tcap, active_p["id"]))
+                # Hidden Penalty Logic (cached)
+                is_taxed = tcap in taxed_captains
                 adjusted_max_bid = max_bid - active_p["base_price"] if is_taxed else max_bid
                 
                 is_disabled = next_bid > adjusted_max_bid
@@ -652,7 +656,8 @@ def render_live_auction_console(
                     # Show normal max bid to keep it secret, or if no penalty exists
                     b_cols[idx].write(f"**{tname}** ({tcap})  \nMax Bid: {format_inr(max_bid)}")
                     
-                if b_cols[idx].button(f"Bid {format_inr(next_bid)}", key=f"bid_btn_{tname}", disabled=is_disabled):
+                # Standard Bid Button
+                if b_cols[idx].button(f"Bid {format_inr(next_bid)}", key=f"bid_btn_{tname}", disabled=is_disabled, use_container_width=True):
                     models.update_live_bid_state(
                         player_id=active_p["id"],
                         current_bid=next_bid,
@@ -661,6 +666,33 @@ def render_live_auction_console(
                         bid_count=live_state["bid_count"] + 1
                     )
                     models.log_action("BID", player_id=active_p["id"], team_name=tname, amount=next_bid, note=f"{t['captain_name']} bid {format_inr(next_bid)}.")
+                    st.rerun()
+                    
+                # Jump Buttons Row
+                j1, j2 = b_cols[idx].columns(2)
+                jump_50L = curr_bid + 50_00_000 if curr_bid > 0 else active_p["base_price"] + 50_00_000
+                jump_1Cr = curr_bid + 1_00_00_000 if curr_bid > 0 else active_p["base_price"] + 1_00_00_000
+                
+                if j1.button("+50L", key=f"jump_50_{tname}", disabled=(jump_50L > adjusted_max_bid), use_container_width=True):
+                    models.update_live_bid_state(
+                        player_id=active_p["id"],
+                        current_bid=jump_50L,
+                        current_bidder=tname,
+                        phase='BIDDING',
+                        bid_count=live_state["bid_count"] + 1
+                    )
+                    models.log_action("BID", player_id=active_p["id"], team_name=tname, amount=jump_50L, note=f"{tcap} jump-bid {format_inr(jump_50L)}.")
+                    st.rerun()
+                    
+                if j2.button("+1Cr", key=f"jump_1c_{tname}", disabled=(jump_1Cr > adjusted_max_bid), use_container_width=True):
+                    models.update_live_bid_state(
+                        player_id=active_p["id"],
+                        current_bid=jump_1Cr,
+                        current_bidder=tname,
+                        phase='BIDDING',
+                        bid_count=live_state["bid_count"] + 1
+                    )
+                    models.log_action("BID", player_id=active_p["id"], team_name=tname, amount=jump_1Cr, note=f"{tcap} jump-bid {format_inr(jump_1Cr)}.")
                     st.rerun()
                     
             # Custom Bid Entry

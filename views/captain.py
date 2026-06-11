@@ -151,15 +151,29 @@ def render_captain() -> None:
         if has_submitted_strategy:
             st.success("✅ Your secret strategies are securely locked in!")
             if current_surprise_id:
-                surp_name = next((n for n, pid in player_options.items() if pid == current_surprise_id), "Unknown")
-                st.write(f"**🎁 Surprise Player:** {surp_name}")
+                surp_player = next((p for p in prediction_players if p["id"] == current_surprise_id), None)
+                if surp_player:
+                    st.markdown(f"**🎁 Surprise Player:** {surp_player['name']} ({surp_player['seeding']})")
+                else:
+                    st.markdown("**🎁 Surprise Player:** Unknown")
+                    
             if preds:
-                st.write("**🔮 Prediction Taxes:**")
+                st.markdown("**🔮 Prediction Taxes:**")
+                table_data = []
                 for p in preds:
                     t_cap = p["target_captain"]
                     t_pid = p["target_player_id"]
-                    t_name = next((n for n, pid in player_options.items() if pid == t_pid), "Unknown")
-                    st.write(f"- {t_cap} will buy {t_name}")
+                    t_player = next((pl for pl in prediction_players if pl["id"] == t_pid), None)
+                    if t_player:
+                        table_data.append({
+                            "Target Captain": t_cap,
+                            "Predicted Player": t_player["name"],
+                            "Seed": t_player["seeding"],
+                            "Base Price": format_inr(t_player["base_price"])
+                        })
+                if table_data:
+                    st.dataframe(table_data, hide_index=True, use_container_width=True)
+                    
             st.info("Please wait for the Admin to launch the Live Auction.")
         else:
             with st.form("secret_strategy_form"):

@@ -391,18 +391,19 @@ def get_team_names():
         for t in get_all_teams()
     ]
 
+_CAPTAINS_CACHE = None
+
 def is_captain_player(player_name):
+    global _CAPTAINS_CACHE
+    if _CAPTAINS_CACHE is None:
+        _CAPTAINS_CACHE = [team["captain_name"].lower() for team in get_all_teams()]
 
     if not player_name:
         return False
 
     name_lower = player_name.lower()
-
-    for team in get_all_teams():
-
-        captain = team["captain_name"]
-
-        if captain.lower() in name_lower:
+    for captain in _CAPTAINS_CACHE:
+        if captain in name_lower:
             return True
 
     return False

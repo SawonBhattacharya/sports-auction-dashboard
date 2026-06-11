@@ -86,13 +86,13 @@ def render_admin() -> None:
             render_admin_reset_panel()
     else:
         with tab_live:
-            render_live_auction_console(show_surprise=False, show_draw=False, show_reset=False)
+            render_live_auction_console(show_surprise=False, show_draw=False, show_reset=False, show_prediction_audit=False)
         with tab_surprise:
             render_surprise_player_section()
         with tab_audit:
             render_prediction_audit_ledger()            
         with tab_wheel:
-            render_live_auction_console(show_rosters=False, show_surprise=False, show_bidding=False, show_reset=False)
+            render_live_auction_console(show_rosters=False, show_surprise=False, show_bidding=False, show_reset=False, show_prediction_audit=False)
         with tab_settings:
             render_admin_reset_panel()
         

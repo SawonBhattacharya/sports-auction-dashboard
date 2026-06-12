@@ -174,8 +174,8 @@ def render_admin_panel():
                 rtm_available = False
                 if rtm_team and highest_bidder and (rtm_team != highest_bidder):
                     # Check if team actually holds an unspent RTM card
-                    t_card = models.row("SELECT COUNT(*) as rtm_remaining FROM teams WHERE name = ? and rtm_used=False", (rtm_team,))
-                    if t_card and t_card["rtm_remaining"] > 0:
+                    t_card = models.row("SELECT COUNT(*) as rtm_used FROM teams WHERE name = ? and rtm_used=False", (rtm_team,))
+                    if t_card and t_card["rtm_used"] > 0:
                         rtm_available = True
                 
                 if not rtm_available:
@@ -325,10 +325,10 @@ def render_admin_panel():
         with st.expander(f"🛡️ Modify {t['name']} (Purse: {format_inr(t['purse_remaining'])})"):
             with st.form(f"team_override_form_{t['name']}"):
                 new_purse = st.number_input("Purse Balance Remaining (INR)", value=int(t["purse_remaining"]), step=100000)
-                new_rtm = st.number_input("RTM Cards Remaining", min_value=0, max_value=5, value=int(t["rtm_remaining"]))
+                new_rtm = st.number_input("RTM Cards Remaining", min_value=0, max_value=5, value=int(t["rtm_used"]))
                 
                 if st.form_submit_button(f"Update parameters for {t['name']}"):
-                    models.execute("UPDATE teams SET purse_remaining = ?, rtm_remaining = ? WHERE name = ?", (new_purse, new_rtm, t["name"]))
+                    models.execute("UPDATE teams SET purse_remaining = ?, rtm_used = ? WHERE name = ?", (new_purse, new_rtm, t["name"]))
                     st.success(f"Parameters for {t['name']} adjusted explicitly!")
                     st.rerun()
 

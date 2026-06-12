@@ -53,7 +53,7 @@ section[data-testid="stSidebar"] {
 from views.login import render_login
 from views.viewer import render_viewer
 from views.captain import render_captain
-from views.admin import render_admin
+from views.admin import render_admin_panel
 import db
 
 # Initialize database on startup
@@ -207,7 +207,7 @@ def main() -> None:
         
     # Router
     if role == "Admin":
-        render_admin()
+        render_admin_panel()
     elif role == "Viewer":
         run_viewer_screen()
     else:

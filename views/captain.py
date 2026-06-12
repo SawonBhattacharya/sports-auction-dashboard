@@ -4,36 +4,55 @@ import json
 from config import format_inr, CAPTAINS
 from models import is_captain_player
 import models
-from db import connect, closing, get_state, set_state
+import db
+from db_old import connect, closing, get_state, set_state
 from ui_components import render_header, render_footer, inject_css, render_team_progress_grid, render_team_squad_rows, render_player_card, render_spin_wheel, render_sale_celebration,render_league_poster
 import rules_engine
 
 import concurrent.futures
 
 @st.fragment(run_every="2s")
-def captain_smart_watcher():
-    def get_db_states():
-        with connect() as con:
-            return get_state(con, "wheel_target_player_id"), get_state(con, "marquee_draft_turn_index")
+def captain_live_console_fragment():
+    """
+    WHY: Same fragment-isolation strategy as viewer. This watcher only fires 2 DB
+    queries per tick instead of the old 5+. Full page rerun (refreshing Purse Header
+    + Squad Rosters) is triggered ONLY when a player is SOLD or the phase changes
+    significantly — not on every bid increment.
+    """
+    live_state = models.get_live_bid_state()
+    global_status = models.get_global_status()
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-        f_live = executor.submit(models.get_live_bid_state)
-        f_glob = executor.submit(models.get_global_status)
-        f_states = executor.submit(get_db_states)
-        
-        live_state = f_live.result()
-        global_status = f_glob.result()
-        spin_target, turn_idx = f_states.result()
-        
-    current_hash = hash(str(live_state) + str(global_status) + str(spin_target) + str(turn_idx))
-    if st.session_state.get("captain_hash") != current_hash:
-        if "captain_hash" in st.session_state:
-            st.session_state["captain_hash"] = current_hash
-            st.rerun()
-        st.session_state["captain_hash"] = current_hash
+    bid_sig = (
+        live_state["current_bid"] if live_state else 0,
+        live_state["phase"] if live_state else "",
+        live_state["current_bidder"] if live_state else "",
+        global_status,
+    )
+
+    prev_sig = st.session_state.get("captain_bid_sig")
+    st.session_state["captain_bid_sig"] = bid_sig
+
+    if prev_sig is None:
+        return  # First load
+
+    if bid_sig == prev_sig:
+        return  # No change
+
+    # Detect SOLD: live_bid_state was cleared (live_state is None) after active bidding
+    player_just_sold = (
+        prev_sig[1] in ("RTM_DECIDE", "RTM_REVISE", "LAST_BID", "BIDDING")
+        and live_state is None
+    )
+    # Detect phase transitions that captains must see immediately (e.g. RTM triggered)
+    phase_changed = prev_sig[1] != (live_state["phase"] if live_state else "")
+
+    if player_just_sold or phase_changed:
+        # Full page rerun: refreshes Purse Header, Squad Rosters, Joker availability
+        st.rerun(scope="app")
+    # Simple bid amount change: fragment reruns itself (only the bid number updates)
 
 def render_captain() -> None:
-    captain_smart_watcher()
+    captain_live_console_fragment()  # Lightweight 2s watcher (fragment-isolated)
     render_league_poster()
     inject_css()
     render_sale_celebration()
@@ -320,7 +339,18 @@ def render_captain() -> None:
                 # Can be activated during standard bidding phase (before RTM+ or finalizing)
                 if phase == 'BIDDING':
                     if jc1.button("🔥 Activate LAST BID Joker", use_container_width=True):
-                        # Freeze standard bidding, open silent bidding
+                        # WHY: We burn the Joker card FIRST in its own transaction before changing the
+                        # phase. This prevents a race where two simultaneous clicks both pass the
+                        # has_general_joker check (both read joker_uses == 0) before either writes.
+                        # By writing rtm_used/joker_used first, the second click will see 1 row in
+                        # audit_log and has_general_joker will be False — safe.
+                        
+                        # Step 1: Burn the card immediately
+                        models.execute("UPDATE teams SET joker_last_bid = 'USED' WHERE captain_name = ?", (captain_name,))
+                        models.log_action("JOKER", player_id=active_player["id"], team_name=tname,
+                                          note=f"{captain_name} activated LAST BID Joker.")
+                        
+                        # Step 2: Then transition the phase
                         models.update_live_bid_state(
                             player_id=active_player["id"],
                             current_bid=curr_bid,
@@ -329,12 +359,8 @@ def render_captain() -> None:
                             last_bid_joker_captain=captain_name,
                             bid_count=live_state["bid_count"]
                         )
-                        models.execute("UPDATE teams SET joker_last_bid = 'USED' WHERE captain_name = ?", (captain_name,))
-                        models.log_action("JOKER", player_id=active_player["id"], team_name=tname, note=f"{captain_name} activated LAST BID Joker.")
                         st.success("Last Bid Joker activated! Standard bidding frozen.")
                         st.rerun()
-                        # 🟢 ADD THIS LINE TO BURN THE CARD IMMEDIATELY:
-    
     
                 # We no longer display the redundant "Cannot be used in this phase" info message
             elif has_joker_type == 'LAST_BID':
@@ -354,6 +380,17 @@ def render_captain() -> None:
                         if rtm_adj_max < curr_bid:
                             jc2.info(f"⚠️ RTM+ unavailable: Adjusted max bid ({format_inr(rtm_adj_max)}) is too low due to tax.")
                         elif jc2.button("💥 Trigger RTM+ Card", use_container_width=True):
+                            # WHY: Burn RTM card FIRST. models.mark_rtm_used sets rtm_used=TRUE.
+                            # Because has_rtm = not team["rtm_used"] is read fresh on each page load,
+                            # burning first means a second simultaneous click will see rtm_used=TRUE
+                            # and will not show the button — double-spend impossible.
+                            
+                            # Step 1: Burn RTM card
+                            models.mark_rtm_used(tname)
+                            models.log_action("JOKER", player_id=active_player["id"], team_name=tname,
+                                              note=f"{captain_name} triggered RTM+ Card.")
+                            
+                            # Step 2: Transition phase
                             models.update_live_bid_state(
                                 player_id=active_player["id"],
                                 current_bid=curr_bid,
@@ -362,9 +399,6 @@ def render_captain() -> None:
                                 rtm_captain=captain_name,
                                 bid_count=live_state["bid_count"]
                             )
-                            # Mark team's RTM+ as used
-                            models.mark_rtm_used(tname)
-                            models.log_action("JOKER", player_id=active_player["id"], team_name=tname, note=f"{captain_name} triggered RTM+ Card.")
                             st.success("RTM+ triggered! Highest bidder must enter revised bid.")
                             st.rerun()
                     else:
@@ -428,69 +462,59 @@ def render_captain() -> None:
                 rc1, rc2 = st.columns(2)
                 if rc1.button("🤝 MATCH (Pay and acquire player)", use_container_width=True):
                     with st.spinner("Processing Sale... Do not refresh."):
-                        if models.get_player(active_player["id"])["status"] == 'SOLD':
-                            st.error("Player already sold! Action aborted.")
-                            st.rerun()
+                        # WHY: Purse check is advisory here. The atomic finalize_sale will
+                        # re-read the purse inside the transaction, so no race condition.
                         if rev_bid > team["purse_remaining"]:
                             st.error("❌ You don't have enough purse remaining to match this bid!")
                         else:
-                            # Process Match: B gets the player at rev_bid
-                            models.update_player_status(active_player["id"], 'SOLD', sold_team=tname, sold_price=rev_bid)
-                            models.update_team_purse(tname, team["purse_remaining"] - rev_bid)
-                            
-                            # Apply Surprise player check
-                            # Bug 1 Fix: Pass base_price
                             bonus = rules_engine.check_surprise_bonus(tname, active_player["id"], active_player["base_price"], rev_bid)
-                            if bonus > 0:
-                                models.update_team_purse(tname, models.get_team(tname)["purse_remaining"] + bonus)
-                                models.log_action("BONUS", player_id=active_player["id"], team_name=tname, amount=bonus, note=f"Surprise Player Bonus activated: +{format_inr(bonus)}")
-                                
-                            # Apply Prediction Tax check (Buying captain penalized)
-                            # Bug 7 fix: use the specific team's max squad size
-                            curr_limit = team["max_squad_size"]
-                            taxes = rules_engine.check_prediction_taxes(tname, active_player["id"],curr_limit,active_player["base_price"], rev_bid)
-                            for tax in taxes:
-                                buyer_t = models.get_team(tname)
-                                models.update_team_purse(tname, buyer_t["purse_remaining"] - tax["tax_amount"])
-                                models.log_action("TAX", player_id=active_player["id"], team_name=tname, amount=tax["tax_amount"], note=f"Prediction Tax penalty: -{format_inr(tax['tax_amount'])} triggered by predictor {tax['predictor_captain']}.")
-                                
-                            models.log_action("SOLD", player_id=active_player["id"], team_name=tname, amount=rev_bid, note=f"{active_player['name']} sold to {tname} (RTM MATCH) for {format_inr(rev_bid)}.")
-                            models.clear_live_bid_state()
-                            st.success(f"Acquired {active_player['name']} for {format_inr(rev_bid)}!")
-                            st.rerun()
+                            raw_taxes = rules_engine.check_prediction_taxes(tname, active_player["id"], team["max_squad_size"], active_player["base_price"], rev_bid)
+                            tax_list = [{"team_name": tname, "amount": t["tax_amount"],
+                                         "note": f"Prediction Tax: -{format_inr(t['tax_amount'])} by {t['predictor_captain']}"}
+                                        for t in raw_taxes]
+
+                            sold_ok = db.finalize_sale(
+                                player_id=active_player["id"],
+                                sold_team=tname,
+                                sold_price=rev_bid,
+                                purse_deduction=rev_bid,
+                                bonus_amount=bonus,
+                                tax_deductions=tax_list,
+                                log_note=f"{active_player['name']} sold to {tname} (RTM MATCH) for {format_inr(rev_bid)}.",
+                            )
+                            if not sold_ok:
+                                st.error("⚠️ Sale already recorded. Please refresh.")
+                            else:
+                                models.clear_live_bid_state()
+                                st.success(f"Acquired {active_player['name']} for {format_inr(rev_bid)}!")
+                                st.rerun()
                         
                 if rc2.button("❌ DECLINE (Let highest bidder buy player)", use_container_width=True):
                     with st.spinner("Processing Sale... Do not refresh."):
-                        if models.get_player(active_player["id"])["status"] == 'SOLD':
-                            st.error("Player already sold! Action aborted.")
-                            st.rerun()
-                        # Process Decline: A gets the player at rev_bid
                         high_bidder_tname = live_state["current_bidder"]
                         high_bidder_team = models.get_team(high_bidder_tname)
-                        
-                        models.update_player_status(active_player["id"], 'SOLD', sold_team=high_bidder_tname, sold_price=rev_bid)
-                        models.update_team_purse(high_bidder_tname, high_bidder_team["purse_remaining"] - rev_bid)
-                        
-                        # Apply Surprise player check
-                        # Bug 1 Fix: pass base_price
+
                         bonus = rules_engine.check_surprise_bonus(high_bidder_tname, active_player["id"], active_player["base_price"], rev_bid)
-                        if bonus > 0:
-                            models.update_team_purse(high_bidder_tname, models.get_team(high_bidder_tname)["purse_remaining"] + bonus)
-                            models.log_action("BONUS", player_id=active_player["id"], team_name=high_bidder_tname, amount=bonus, note=f"Surprise Player Bonus activated: +{format_inr(bonus)}")
-                            
-                        # Apply Prediction Tax check (Buying captain penalized)
-                        # Bug 2 and 7 Fix
-                        curr_limit = high_bidder_team["max_squad_size"]
-                        taxes = rules_engine.check_prediction_taxes(high_bidder_tname, active_player["id"],curr_limit,active_player["base_price"], rev_bid)
-                        for tax in taxes:
-                            buyer_t = models.get_team(high_bidder_tname)
-                            models.update_team_purse(high_bidder_tname, buyer_t["purse_remaining"] - tax["tax_amount"])
-                            models.log_action("TAX", player_id=active_player["id"], team_name=high_bidder_tname, amount=tax["tax_amount"], note=f"Prediction Tax penalty: -{format_inr(tax['tax_amount'])} triggered by predictor {tax['predictor_captain']}.")
-                            
-                        models.log_action("SOLD", player_id=active_player["id"], team_name=high_bidder_tname, amount=rev_bid, note=f"{active_player['name']} sold to {high_bidder_tname} (RTM DECLINED) for {format_inr(rev_bid)}.")
-                        models.clear_live_bid_state()
-                        st.success(f"Released player. Acquired by {high_bidder_tname} for {format_inr(rev_bid)}.")
-                        st.rerun()
+                        raw_taxes = rules_engine.check_prediction_taxes(high_bidder_tname, active_player["id"], high_bidder_team["max_squad_size"], active_player["base_price"], rev_bid)
+                        tax_list = [{"team_name": high_bidder_tname, "amount": t["tax_amount"],
+                                     "note": f"Prediction Tax: -{format_inr(t['tax_amount'])} by {t['predictor_captain']}"}
+                                    for t in raw_taxes]
+
+                        sold_ok = db.finalize_sale(
+                            player_id=active_player["id"],
+                            sold_team=high_bidder_tname,
+                            sold_price=rev_bid,
+                            purse_deduction=rev_bid,
+                            bonus_amount=bonus,
+                            tax_deductions=tax_list,
+                            log_note=f"{active_player['name']} sold to {high_bidder_tname} (RTM DECLINED) for {format_inr(rev_bid)}.",
+                        )
+                        if not sold_ok:
+                            st.error("⚠️ Sale already recorded. Please refresh.")
+                        else:
+                            models.clear_live_bid_state()
+                            st.success(f"Released. Acquired by {high_bidder_tname} for {format_inr(rev_bid)}.")
+                            st.rerun()
                     
             # ── Revised Bid Input for Highest Bidder (RTM_REVISE Phase) ──
             if phase == 'RTM_REVISE' and bidder == tname:
@@ -545,17 +569,22 @@ def render_captain() -> None:
                 if selected_nom != "Select player...":
                     chosen_pid = av_options[selected_nom]
                     if st.button("🔥 Activate FORCE NOMINATION", use_container_width=True):
-                        # Put on the block
+                        # WHY: Same burn-first pattern as Last Bid Joker. Burn the card before
+                        # transitioning state so a double-click or parallel request cannot
+                        # activate the joker twice.
+                        
+                        # Step 1: Burn the card
+                        models.execute("UPDATE teams SET joker_force_nom = 'USED' WHERE captain_name = ?", (captain_name,))
+                        models.log_action("JOKER", player_id=chosen_pid, team_name=tname,
+                                          note=f"{captain_name} activated FORCE NOMINATION.")
+                        
+                        # Step 2: Put player on the block
                         models.update_live_bid_state(
                             player_id=chosen_pid,
                             current_bid=0,
                             current_bidder=None,
                             phase='BIDDING'
                         )
-                        # 🟢 ADD THIS LINE TO BURN THE CARD IMMEDIATELY:
-                        models.execute("UPDATE teams SET joker_force_nom = 'USED' WHERE captain_name = ?", (captain_name,))
-                        
-                        models.log_action("JOKER", player_id=chosen_pid, team_name=tname, note=f"{captain_name} activated FORCE NOMINATION.")
                         st.success(f"{selected_nom} is now on the auction block!")
                         st.rerun()
 

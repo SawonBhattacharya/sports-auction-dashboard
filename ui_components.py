@@ -632,7 +632,7 @@ def find_player_photo(player_name: str) -> Optional[str]:
     """Search for a player's photo under images/player_photo/ by trying different extensions
     and checking case-insensitively.
     """
-    photo_dir = Path("images/player_photo")
+    photo_dir = Path("images/player_thumb")
     if not photo_dir.exists():
         return None
         

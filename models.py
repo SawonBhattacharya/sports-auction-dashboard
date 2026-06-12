@@ -2,7 +2,7 @@ import re
 import pandas as pd
 from pathlib import Path
 from typing import Any, Optional
-from db_old import connect, rows, one, execute, utc_now, clean_text, number_or_none, get_state, set_state
+from db import connect, rows, one, execute, utc_now, clean_text, number_or_none, get_state, set_state
 from config import TIER_COSTS, INITIAL_PURSE, CAPTAINS, MARQUEE_BASE_PRICE
 
 def clean_excel_formula_price(val: Any, seeding: str) -> int:

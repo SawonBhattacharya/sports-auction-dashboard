@@ -10,7 +10,7 @@ import db
 import models
 from models import is_captain_player
 import rules_engine
-from db_old import connect, closing, get_state, set_state, init_db
+from db import connect, closing, get_state, set_state, init_db
 import ui_components
 
 

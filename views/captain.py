@@ -5,7 +5,7 @@ from config import format_inr, CAPTAINS
 from models import is_captain_player
 import models
 import db
-from db_old import connect, closing, get_state, set_state
+from db import connect, closing, get_state, set_state
 from ui_components import render_header, render_footer, inject_css, render_team_progress_grid, render_team_squad_rows, render_player_card, render_spin_wheel, render_sale_celebration,render_league_poster
 import rules_engine
 

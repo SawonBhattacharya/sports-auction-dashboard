@@ -174,7 +174,7 @@ def render_admin_panel():
                 rtm_available = False
                 if rtm_team and highest_bidder and (rtm_team != highest_bidder):
                     # Check if team actually holds an unspent RTM card
-                    t_card = models.row("SELECT rtm_remaining FROM teams WHERE name = ?", (rtm_team,))
+                    t_card = models.row("SELECT COUNT(*) as rtm_remaining FROM teams WHERE name = ? and rtm_used=False", (rtm_team,))
                     if t_card and t_card["rtm_remaining"] > 0:
                         rtm_available = True
                 

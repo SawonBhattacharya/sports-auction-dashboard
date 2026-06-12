@@ -15,7 +15,7 @@ import ui_components
 
 import concurrent.futures
 
-@st.fragment(run_every="2s")
+@st.fragment(run_every="10s")
 def admin_smart_watcher():
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
         f_live = executor.submit(models.get_live_bid_state)
